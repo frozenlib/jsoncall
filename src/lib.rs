@@ -25,31 +25,44 @@ pub use message_read::*;
 pub use message_write::*;
 
 pub trait Handler {
-    fn request(&self, request: Request) -> Result<Response>;
-    fn notification(&self, notification: Notification) -> Result<Response>;
+    fn request(&mut self, request: Request) -> Result<Response>;
+    fn notification(&mut self, notification: Notification) -> Result<Response>;
 }
 
 pub struct Request<'a> {
-    method: &'a str,
+    m: &'a RequestMessage,
+    session: &'a SessionContext,
 }
 impl<'a> Request<'a> {
     fn method(&self) -> &str {
-        todo!()
+        &self.m.method
     }
     fn id(&self) -> &RequestId {
-        todo!()
+        &self.m.id
     }
     fn params<'b, T>(&'b self) -> Result<T>
     where
         T: Deserialize<'b>,
     {
-        todo!()
+        if let Some(p) = self.params_opt()? {
+            Ok(p)
+        } else {
+            Err(Error::ParamsMissing)
+        }
     }
     fn params_opt<'b, T>(&'b self) -> Result<Option<T>>
     where
+        'a: 'b,
         T: Deserialize<'b>,
     {
-        todo!()
+        if let Some(p) = &self.m.params {
+            match <T as Deserialize>::deserialize(p) {
+                Ok(p) => Ok(Some(p)),
+                Err(e) => Err(Error::ParamsParse(Arc::new(e))),
+            }
+        } else {
+            Ok(None)
+        }
     }
     fn success<T>(self, result: &T) -> Result<Response>
     where
@@ -293,27 +306,24 @@ impl SessionState {
     }
 }
 
-struct RawSession(Mutex<SessionState>);
-
-impl RawSession {
-    fn new() -> Arc<Self> {
-        Arc::new(Self(Mutex::new(SessionState::new())))
+struct MessageDispatcher<H> {
+    session: Arc<RawSession>,
+    handler: H,
+}
+impl<H> MessageDispatcher<H>
+where
+    H: Handler + Send + Sync,
+{
+    async fn run(session: Arc<RawSession>, handler: H, reader: impl MessageRead + Send + Sync) {
+        Self { session, handler }.run_raw_0(reader).await
+    }
+    async fn run_raw_0(&mut self, reader: impl MessageRead + Send + Sync) {
+        if let Err(e) = self.run_raw_1(reader).await {
+            self.session.set_io_error(e);
+        }
     }
 
-    async fn run_read(
-        self: &Arc<Self>,
-        handler: impl Handler + Send + Sync + 'static,
-        reader: impl MessageRead + Send + Sync + 'static,
-    ) {
-        self.set_io_result(self.run_read_raw(session, handler, reader).await);
-    }
-
-    async fn run_read_raw(
-        self: &Arc<Self>,
-        handler: impl Handler + Send + Sync + 'static,
-        mut reader: impl MessageRead + Send + Sync + 'static,
-    ) -> Result<()> {
-        let handler = Arc::new(handler);
+    async fn run_raw_1(&mut self, mut reader: impl MessageRead + Send + Sync) -> Result<()> {
         while let Some(b) = reader.read().await? {
             for m in b {
                 self.on_message_one(m).await;
@@ -321,38 +331,34 @@ impl RawSession {
         }
         Ok(())
     }
-
-    fn set_io_result(self: &Arc<Self>, r: Result<()>) {
-        if let Err(e) = r {
-            self.set_io_error(e);
-        }
-    }
-    fn set_io_error(self: &Arc<Self>, e: Error) {
-        todo!()
-    }
-
-    async fn on_message_one(&self, m: RawMessage) {
+    async fn on_message_one(&mut self, m: Message) {
         let id = m.id.clone();
         match self.dispatch_message(m) {
             Ok(()) => {}
-            Err(e) => self.send_response(id, Err(e)).await,
+            Err(e) => self.session.send_response(id, Err(e)).await,
         }
     }
-    fn dispatch_message(&self, m: RawMessage) -> Result<()> {
-        match m.try_into_message()? {
-            Message::Request(m) => self.on_request(m)?,
-            Message::Success(m) => self.on_response(m.id, Ok(m.result)),
-            Message::Error(m) => self.on_response(m.id, Err(Error::ErrorObject(m.error))),
-            Message::Notification(m) => self.on_notification(m),
+    fn dispatch_message(&mut self, m: Message) -> Result<()> {
+        match m.try_into_message_enum()? {
+            MessageEnum::Request(m) => self.on_request(m)?,
+            MessageEnum::Success(m) => self.on_response(m.id, Ok(m.result)),
+            MessageEnum::Error(m) => self.on_response(m.id, Err(Error::ErrorObject(m.error))),
+            MessageEnum::Notification(m) => self.on_notification(m),
         };
         Ok(())
     }
     fn on_request(self: Arc<Self>, handler: &impl Handler, m: RequestMessage) -> Result<()> {
-        let state = self.0.lock().unwrap().insert_incoming_request(&m.id)?;
-        let cx = SessionContext::new(&self);
+        let state = self
+            .session
+            .0
+            .lock()
+            .unwrap()
+            .insert_incoming_request(&m.id)?;
+        let cx = SessionContext::new(&self.session);
         let cx = RequestContext::new(m.id, &state, cx);
 
-        let handler = self.handler.clone();
+        // todo!()
+
         let task = spawn(async move {
             cx.send_response(handler.dyn_request(&m.method, m.params, &cx).await)
                 .await;
@@ -363,6 +369,19 @@ impl RawSession {
         }
         Ok(())
     }
+}
+
+struct RawSession(Mutex<SessionState>);
+
+impl RawSession {
+    fn new() -> Arc<Self> {
+        Arc::new(Self(Mutex::new(SessionState::new())))
+    }
+
+    fn set_io_error(self: &Arc<Self>, e: Error) {
+        todo!()
+    }
+
     fn on_notification(&self, m: NotificationMessage) {
         let cx = SessionContext::new(&self.session);
         let handler = self.handler.clone();
@@ -388,11 +407,11 @@ impl RawSession {
         params: Option<Map<String, Value>>,
     ) -> Result<Value> {
         let s = OutgoingRequestStateGuard::new(&self.state)?;
-        let m = RawMessage {
+        let m = Message {
             id: Some(s.id.into()),
             method: Some(method.into()),
             params,
-            ..RawMessage::default()
+            ..Message::default()
         };
         self.writer.lock().await.write(m.into()).await?;
         (&s).await
@@ -402,7 +421,7 @@ impl RawSession {
             .writer
             .lock()
             .await
-            .write(RawMessage::from_result(id, result).into())
+            .write(Message::from_result(id, result).into())
             .await;
         self.log_error(ret);
     }
@@ -411,10 +430,10 @@ impl RawSession {
         method: &str,
         params: Option<Map<String, Value>>,
     ) -> Result<()> {
-        let m = RawMessage {
+        let m = Message {
             method: Some(method.into()),
             params,
-            ..RawMessage::default()
+            ..Message::default()
         };
         self.writer.lock().await.write(m.into()).await
     }

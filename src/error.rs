@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::{ErrorObject, RequestId};
 
 pub enum Error {
@@ -7,8 +9,9 @@ pub enum Error {
     RequestIdReused(RequestId),
     RequestIdNotFound(RequestId),
     RequestIdOverflow,
+    ParamsMissing,
+    ParamsParse(Arc<serde_json::Error>),
     Spawn(tokio::task::JoinError),
-    Parse(Option<Box<dyn std::error::Error + Send + Sync + 'static>>),
     Shutdown,
 }
 impl Error {

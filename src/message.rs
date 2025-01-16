@@ -49,11 +49,11 @@ impl TryFrom<RequestId> for u128 {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum MessageBatch {
-    Single(RawMessage),
-    Batch(Vec<RawMessage>),
+    Single(Message),
+    Batch(Vec<Message>),
 }
 impl IntoIterator for MessageBatch {
-    type Item = RawMessage;
+    type Item = Message;
     type IntoIter = MessageBatchIter;
     fn into_iter(self) -> Self::IntoIter {
         match self {
@@ -64,11 +64,11 @@ impl IntoIterator for MessageBatch {
 }
 
 pub enum MessageBatchIter {
-    One(Option<RawMessage>),
-    Many(std::vec::IntoIter<RawMessage>),
+    One(Option<Message>),
+    Many(std::vec::IntoIter<Message>),
 }
 impl Iterator for MessageBatchIter {
-    type Item = RawMessage;
+    type Item = Message;
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             MessageBatchIter::One(msg) => msg.take(),
@@ -78,7 +78,7 @@ impl Iterator for MessageBatchIter {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct RawMessage {
+pub struct Message {
     pub jsonrpc: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<RequestId>,
@@ -91,9 +91,9 @@ pub struct RawMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ErrorObject>,
 }
-impl Default for RawMessage {
+impl Default for Message {
     fn default() -> Self {
-        RawMessage {
+        Message {
             jsonrpc: "2.0".to_string(),
             method: None,
             id: None,
@@ -104,7 +104,7 @@ impl Default for RawMessage {
     }
 }
 
-impl RawMessage {
+impl Message {
     pub fn from_result(id: Option<RequestId>, result: Result<Value>) -> Self {
         let mut m = Self {
             id,
@@ -117,35 +117,37 @@ impl RawMessage {
         m
     }
 
-    pub(super) fn try_into_message(self) -> Result<Message> {
+    pub(super) fn try_into_message_enum(self) -> Result<MessageEnum> {
         if self.jsonrpc != "2.0" {
             return Err(Error::Version(self.jsonrpc));
         }
         match (self.id, self.method, self.result, self.error) {
-            (Some(id), Some(method), None, None) => Ok(Message::Request(RequestMessage {
+            (Some(id), Some(method), None, None) => Ok(MessageEnum::Request(RequestMessage {
                 id,
                 method,
                 params: self.params,
             })),
             (Some(id), _, Some(result), None) => {
-                Ok(Message::Success(SuccessMessage { id, result }))
+                Ok(MessageEnum::Success(SuccessMessage { id, result }))
             }
-            (Some(id), _, None, Some(error)) => Ok(Message::Error(ErrorMessage { id, error })),
-            (None, Some(method), None, None) => Ok(Message::Notification(NotificationMessage {
-                method,
-                params: self.params,
-            })),
+            (Some(id), _, None, Some(error)) => Ok(MessageEnum::Error(ErrorMessage { id, error })),
+            (None, Some(method), None, None) => {
+                Ok(MessageEnum::Notification(NotificationMessage {
+                    method,
+                    params: self.params,
+                }))
+            }
             _ => Err(Error::MessageStructure),
         }
     }
 }
-impl From<RawMessage> for MessageBatch {
-    fn from(msg: RawMessage) -> Self {
+impl From<Message> for MessageBatch {
+    fn from(msg: Message) -> Self {
         MessageBatch::Single(msg)
     }
 }
 
-pub(super) enum Message {
+pub(super) enum MessageEnum {
     Request(RequestMessage),
     Success(SuccessMessage),
     Error(ErrorMessage),
