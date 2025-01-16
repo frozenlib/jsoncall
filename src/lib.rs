@@ -7,7 +7,7 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-use futures::{AsyncBufRead, AsyncWrite, Stream};
+use futures::{AsyncBufRead, Stream};
 use serde_json::{Map, Value};
 use tokio::{spawn, task::JoinHandle};
 
@@ -210,11 +210,95 @@ impl SessionState {
     }
 }
 
-struct RawSession {
-    writer: Arc<tokio::sync::Mutex<BoxMessageWriter>>,
-    state: Arc<Mutex<SessionState>>,
-}
+struct RawSession(Mutex<SessionState>);
+
 impl RawSession {
+    fn new() -> Arc<Self> {
+        Arc::new(Self(Mutex::new(SessionState::new())))
+    }
+
+    async fn run_read(
+        self: &Arc<Self>,
+        handler: impl Handler + Send + Sync + 'static,
+        reader: impl MessageRead + Send + Sync + 'static,
+    ) {
+        self.set_io_result(self.run_read_raw(session, handler, reader).await);
+    }
+
+    async fn run_read_raw(
+        self: &Arc<Self>,
+        handler: impl Handler + Send + Sync + 'static,
+        mut reader: impl MessageRead + Send + Sync + 'static,
+    ) -> Result<()> {
+        let handler = Arc::new(handler);
+        while let Some(b) = reader.read().await? {
+            for m in b {
+                self.on_message_one(m).await;
+            }
+        }
+        Ok(())
+    }
+
+    fn set_io_result(self: &Arc<Self>, r: Result<()>) {
+        if let Err(e) = r {
+            self.set_io_error(e);
+        }
+    }
+    fn set_io_error(self: &Arc<Self>, e: Error) {
+        todo!()
+    }
+
+    async fn on_message_one(&self, m: RawMessage) {
+        let id = m.id.clone();
+        match self.dispatch_message(m) {
+            Ok(()) => {}
+            Err(e) => self.send_response(id, Err(e)).await,
+        }
+    }
+    fn dispatch_message(&self, m: RawMessage) -> Result<()> {
+        match m.try_into_message()? {
+            Message::Request(m) => self.on_request(m)?,
+            Message::Success(m) => self.on_response(m.id, Ok(m.result)),
+            Message::Error(m) => self.on_response(m.id, Err(Error::ErrorObject(m.error))),
+            Message::Notification(m) => self.on_notification(m),
+        };
+        Ok(())
+    }
+    fn on_request(self: Arc<Self>, handler: &impl Handler, m: RequestMessage) -> Result<()> {
+        let state = self.0.lock().unwrap().insert_incoming_request(&m.id)?;
+        let cx = SessionContext::new(&self);
+        let cx = RequestContext::new(m.id, &state, cx);
+
+        let handler = self.handler.clone();
+        let task = spawn(async move {
+            cx.send_response(handler.dyn_request(&m.method, m.params, &cx).await)
+                .await;
+        });
+        let task = state.lock().unwrap().on_spawn(task);
+        if let Some(task) = task {
+            self.session.state.lock().unwrap().insert_task(task);
+        }
+        Ok(())
+    }
+    fn on_notification(&self, m: NotificationMessage) {
+        let cx = SessionContext::new(&self.session);
+        let handler = self.handler.clone();
+        let task = spawn(async move {
+            handler.dyn_notification(&m.method, m.params, &cx).await;
+        });
+        self.session.state.lock().unwrap().insert_task(task);
+    }
+    fn on_response(&self, id: RequestId, result: Result<Value>) {
+        let Ok(id) = id.try_into() else {
+            return;
+        };
+        let state = self.state.lock().unwrap().outgoing_requests.remove(&id);
+        let Some(state) = state else {
+            return;
+        };
+        state.lock().unwrap().set_ready(result);
+    }
+
     async fn send_request(
         &self,
         method: &str,
@@ -266,23 +350,36 @@ impl RawSession {
     }
 }
 
-pub struct Session {
-    handler: Arc<dyn DynHandler + Send + Sync + 'static>,
-    session: Arc<RawSession>,
-}
+pub struct Session(Arc<RawSession>);
 
 impl Session {
     pub fn new(
         handler: impl Handler + Send + Sync + 'static,
+        reader: impl MessageRead + Send + Sync + 'static,
         writer: impl MessageWrite + Send + Sync + 'static,
     ) -> Self {
-        Self {
-            handler: Arc::new(handler),
-            session: Arc::new(RawSession {
-                writer: Arc::new(tokio::sync::Mutex::new(writer.boxed())),
-                state: Arc::new(Mutex::new(SessionState::new())),
-            }),
-        }
+        let session = RawSession::new();
+        let task_read = spawn({
+            let session = session.clone();
+            async move {
+                session.run_read(handler, reader).await;
+            }
+        });
+
+        // let handle=spawn({
+        //     let session=session.clone();
+        //     async {
+
+        // }})
+
+        // Self {
+        //     handler: Arc::new(handler),
+        //     session: Arc::new(RawSession {
+        //         writer: Arc::new(tokio::sync::Mutex::new(writer.boxed())),
+        //         state: Arc::new(Mutex::new(SessionState::new())),
+        //     }),
+        // }
+        todo!()
     }
     pub fn context(&self) -> SessionContext {
         SessionContext::new(&self.session)
@@ -300,75 +397,6 @@ impl Session {
 
     pub async fn shutdown(&self) -> Result<()> {
         todo!()
-    }
-
-    fn on_request(&self, m: RequestMessage) -> Result<()> {
-        let state = self
-            .session
-            .state
-            .lock()
-            .unwrap()
-            .insert_incoming_request(&m.id)?;
-        let cx = SessionContext::new(&self.session);
-        let cx = RequestContext::new(m.id, &state, cx);
-
-        let handler = self.handler.clone();
-        let task = spawn(async move {
-            cx.send_response(handler.dyn_request(&m.method, m.params, &cx).await)
-                .await;
-        });
-        let task = state.lock().unwrap().on_spawn(task);
-        if let Some(task) = task {
-            self.session.state.lock().unwrap().insert_task(task);
-        }
-        Ok(())
-    }
-    fn on_notification(&self, m: NotificationMessage) {
-        let cx = SessionContext::new(&self.session);
-        let handler = self.handler.clone();
-        let task = spawn(async move {
-            handler.dyn_notification(&m.method, m.params, &cx).await;
-        });
-        self.session.state.lock().unwrap().insert_task(task);
-    }
-
-    fn on_response(&self, id: RequestId, result: Result<Value>) {
-        let Ok(id) = id.try_into() else {
-            return;
-        };
-        let state = self
-            .session
-            .state
-            .lock()
-            .unwrap()
-            .outgoing_requests
-            .remove(&id);
-        let Some(state) = state else {
-            return;
-        };
-        state.lock().unwrap().set_ready(result);
-    }
-
-    pub async fn on_message(&self, batch: MessageBatch) {
-        for m in batch {
-            self.on_message_one(m).await
-        }
-    }
-    async fn on_message_one(&self, m: RawMessage) {
-        let id = m.id.clone();
-        match self.dispatch_message(m) {
-            Ok(()) => {}
-            Err(e) => self.session.send_response(id, Err(e)).await,
-        }
-    }
-    fn dispatch_message(&self, m: RawMessage) -> Result<()> {
-        match m.try_into_message()? {
-            Message::Request(m) => self.on_request(m)?,
-            Message::Success(m) => self.on_response(m.id, Ok(m.result)),
-            Message::Error(m) => self.on_response(m.id, Err(Error::ErrorObject(m.error))),
-            Message::Notification(m) => self.on_notification(m),
-        };
-        Ok(())
     }
 }
 

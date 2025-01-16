@@ -20,7 +20,7 @@ pub trait Handler {
     ) -> impl Future<Output = ()> + Send + Sync;
 }
 
-pub(super) trait DynHandler {
+pub(super) trait DynHandler: Sync + Send + 'static {
     fn dyn_request<'a>(
         &'a self,
         method: &'a str,
