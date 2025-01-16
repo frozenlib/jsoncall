@@ -8,6 +8,7 @@ use std::{
 };
 
 use futures::{AsyncBufRead, Stream};
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tokio::{spawn, task::JoinHandle};
 
@@ -22,6 +23,88 @@ pub use handler::*;
 pub use message::*;
 pub use message_read::*;
 pub use message_write::*;
+
+pub trait Handler {
+    fn request(&self, request: Request) -> Result<Response>;
+    fn notification(&self, notification: Notification) -> Result<Response>;
+}
+
+pub struct Request<'a> {
+    method: &'a str,
+}
+impl<'a> Request<'a> {
+    fn method(&self) -> &str {
+        todo!()
+    }
+    fn id(&self) -> &RequestId {
+        todo!()
+    }
+    fn params<'b, T>(&'b self) -> Result<T>
+    where
+        T: Deserialize<'b>,
+    {
+        todo!()
+    }
+    fn params_opt<'b, T>(&'b self) -> Result<Option<T>>
+    where
+        T: Deserialize<'b>,
+    {
+        todo!()
+    }
+    fn success<T>(self, result: &T) -> Result<Response>
+    where
+        T: Serialize,
+    {
+        todo!()
+    }
+    fn spawn(
+        self,
+        task: impl Future<Output = Result<impl Serialize>> + Send + Sync + 'static,
+    ) -> Result<Response> {
+        todo!()
+    }
+    fn session(&self) -> SessionContext {
+        todo!()
+    }
+}
+
+pub struct Notification<'a> {
+    method: &'a str,
+}
+impl Notification<'_> {
+    fn method(&self) -> &str {
+        todo!()
+    }
+    fn params<'b, T>(&'b self) -> Result<T>
+    where
+        T: Deserialize<'b>,
+    {
+        todo!()
+    }
+    fn params_opt<'b, T>(&'b self) -> Result<Option<T>>
+    where
+        T: Deserialize<'b>,
+    {
+        todo!()
+    }
+    fn success(self) -> Result<Response> {
+        todo!()
+    }
+    fn spawn(self, task: impl Future<Output = ()> + Send + Sync + 'static) -> Result<Response> {
+        todo!()
+    }
+    fn session(&self) -> SessionContext {
+        todo!()
+    }
+}
+
+pub struct Response(RawResponse);
+
+enum RawResponse {
+    Ok(Value),
+    Err(Error),
+    Spawn,
+}
 
 enum IncomingRequestState {
     Init,
