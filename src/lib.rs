@@ -172,6 +172,8 @@ impl IncomingRequestState {
             task: TaskHandle::new(),
         }
     }
+
+    #[must_use]
     fn init_finish(
         &mut self,
         id: &RequestId,
@@ -212,14 +214,14 @@ impl IncomingRequestState {
         &mut self,
         id: &RequestId,
         response: Option<Error>,
-        ahs: &mut AbortingHandles,
+        aborts: &mut AbortingHandles,
         ob: &mut OutgoingBuffer,
     ) {
         if self.is_cancelled {
             return;
         }
         self.is_cancelled = true;
-        self.task.abort(ahs);
+        self.task.abort(aborts);
         if !self.is_response_sent {
             self.is_response_sent = true;
             if let Some(e) = response {
@@ -344,6 +346,11 @@ impl SessionContext {
             Err(Error::Shutdown)
         }
     }
+    pub fn cancel_incoming_request(&self, id: &RequestId, response: Option<Error>) {
+        if let Some(s) = self.0.upgrade() {
+            s.cancel_incoming_request(id, response);
+        }
+    }
 }
 
 struct MessageDispatcher<H> {
@@ -397,8 +404,9 @@ where
         let r = self.handler.request(&m.method, params, cx);
         let s = &mut *self.session.lock();
         if let Some(ir) = s.incoming_requests.get_mut(&m.id) {
-            ir.init_finish(&m.id, r, &mut s.aborts, &mut s.outgoing_buffer);
-            s.remove_incoming_request(&m.id);
+            if ir.init_finish(&m.id, r, &mut s.aborts, &mut s.outgoing_buffer) {
+                s.remove_incoming_request(&m.id);
+            }
         }
     }
     fn on_response(&self, id: RequestId, result: Result<Value>) {
@@ -635,7 +643,7 @@ impl RawSession {
         let s = &mut *self.lock();
         if let Some(ir) = s.incoming_requests.get_mut(id) {
             ir.cancel(id, response, &mut s.aborts, &mut s.outgoing_buffer);
-            s.incoming_requests.remove(id);
+            s.remove_incoming_request(id);
         }
     }
 
@@ -717,6 +725,9 @@ impl Session {
         P: Serialize,
     {
         self.0.notification(name, params)
+    }
+    pub fn cancel_incoming_request(&self, id: &RequestId, response: Option<Error>) {
+        self.0.cancel_incoming_request(id, response);
     }
 
     pub fn context(self: Arc<Self>) -> SessionContext {

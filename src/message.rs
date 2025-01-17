@@ -132,10 +132,6 @@ pub(crate) struct RawMessageS<'a, P, R> {
 pub(crate) struct MessageData(pub String);
 
 impl MessageData {
-    pub fn new(data: String) -> Self {
-        Self(data)
-    }
-
     pub fn from_raw_message_s<P, R>(msg: &RawMessageS<P, R>) -> Result<Self>
     where
         P: Serialize,

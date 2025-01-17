@@ -1,11 +1,5 @@
 # todo
 
-incomingRequests はレスポンスを後で返す必要が無くなった時点で破棄する
-oneshotBroadcast を利用して、確実に read,writeTask を使用可能にする →tokio の oneshot が使える
-
-can_remove が joinHandle を使用してるが、この情報は同期的ではない。
-is_taask_finished で判断する方が良いが、これは abort 時に使えない
-
 is_canceled を TaskHandle.is_abort と統合
 
 shutdown にはキャンセル処理が含まれるため、キャンセルの実装が必要
