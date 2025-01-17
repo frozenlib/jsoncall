@@ -2,7 +2,7 @@ use std::{
     collections::{hash_map, HashMap},
     future::{poll_fn, Future},
     mem,
-    pin::{pin, Pin},
+    pin::pin,
     sync::{Arc, Mutex, MutexGuard, Weak},
     task::{Context, Poll, Waker},
 };
