@@ -518,11 +518,13 @@ impl SessionState {
             return;
         }
         self.is_shutdown = true;
-        self.read_task.abort();
+        self.read_task.abort(&mut self.aborts);
         self.finish_read_state(Ok(()));
-        // - [ ] 各メソッドハンドラをキャンセルする
-        // - [ ] メソッドハンドラのキャンセル完了を待機する
-        // - [ ] キャンセル完了とデータ送信が完了したら、サーバ待機タスクを正常終了する
+        self.write_task.abort(&mut self.aborts);
+        self.finish_write_state(Ok(()));
+        for (id, ir) in &mut self.incoming_requests {
+            ir.cancel(id, None, &mut self.aborts, &mut self.outgoing_buffer);
+        }
     }
     fn insert_incoming_request(&mut self, id: &RequestId) -> bool {
         let state = IncomingRequestState::new();
@@ -710,12 +712,14 @@ impl Session {
         writer: impl AsyncWrite + Send + Sync + 'static,
     ) -> Self {
         let session = RawSession::new();
-        let read_task = spawn(MessageDispatcher::run(session.clone(), handler, reader));
-        let write_task = spawn(session.clone().run_write_task(writer));
-        let mut s = session.lock();
-        s.read_task.set_task(read_task);
-        s.write_task.set_task(write_task);
-        drop(s);
+        {
+            let s = &mut *session.lock();
+            // By acquiring the lock before spawn, ensure that read_task.set_task and write_task.set_task are called elsewhere.
+            let read_task = spawn(MessageDispatcher::run(session.clone(), handler, reader));
+            let write_task = spawn(session.clone().run_write_task(writer));
+            s.read_task.set_task(read_task, &mut s.aborts);
+            s.write_task.set_task(write_task, &mut s.aborts);
+        }
         Self(session)
     }
     pub async fn request<P, R>(&self, method: &str, params: Option<&P>) -> Result<R>
@@ -737,6 +741,9 @@ impl Session {
     }
     pub fn shutdown(&self) {
         self.0.lock().shutdown();
+    }
+    pub async fn wait(&self) -> Result<()> {
+        todo!()
     }
 }
 
