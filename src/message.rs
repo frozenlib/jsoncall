@@ -25,7 +25,7 @@ const MAX_SAFE_INTEGER: u128 = 9007199254740991;
 impl From<OutgoingRequestId> for RequestId {
     fn from(id: OutgoingRequestId) -> Self {
         if id.0 < MAX_SAFE_INTEGER {
-            RequestId(RawRequestId::U128(id.0 as u128))
+            RequestId(RawRequestId::U128(id.0))
         } else {
             RequestId(RawRequestId::String(id.0.to_string()))
         }

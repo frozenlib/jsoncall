@@ -334,55 +334,6 @@ impl SessionContext {
     }
 }
 
-struct SessionState {
-    incoming_requests: HashMap<RequestId, IncomingRequestState>,
-    outgoing_requests: HashMap<OutgoingRequestId, Arc<dyn OutgoingRequest>>,
-    outgoing_request_id_next: u128,
-    outgoing_buffer: OutgoingBuffer,
-}
-impl SessionState {
-    fn new() -> Self {
-        Self {
-            incoming_requests: HashMap::new(),
-            outgoing_requests: HashMap::new(),
-            outgoing_buffer: OutgoingBuffer::new(),
-            outgoing_request_id_next: 0,
-        }
-    }
-    fn insert_incoming_request(&mut self, id: &RequestId) -> bool {
-        let state = IncomingRequestState::new();
-        match self.incoming_requests.entry(id.clone()) {
-            hash_map::Entry::Occupied(_) => {
-                self.outgoing_buffer.push(MessageData::from_error(
-                    Some(id.clone()),
-                    Error::RequestIdReused(id.clone()),
-                ));
-                false
-            }
-            hash_map::Entry::Vacant(e) => {
-                e.insert(state);
-                true
-            }
-        }
-    }
-
-    fn insert_outgoing_request<T>(
-        &mut self,
-    ) -> Result<(OutgoingRequestId, Arc<Mutex<OutgoingRequestState<T>>>)>
-    where
-        T: DeserializeOwned + Send + Sync + 'static,
-    {
-        if self.outgoing_request_id_next == u128::MAX {
-            return Err(Error::RequestIdOverflow);
-        }
-        let id = OutgoingRequestId(self.outgoing_request_id_next);
-        self.outgoing_request_id_next += 1;
-        let state = Arc::new(Mutex::new(OutgoingRequestState::<T>::new()));
-        self.outgoing_requests.insert(id, state.clone());
-        Ok((id, state))
-    }
-}
-
 struct MessageDispatcher<H> {
     session: Arc<RawSession>,
     handler: H,
@@ -461,6 +412,77 @@ where
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum ReaderState {
+    Running,
+    End,
+    Shutdown,
+    Error,
+}
+
+struct SessionState {
+    incoming_requests: HashMap<RequestId, IncomingRequestState>,
+    outgoing_requests: HashMap<OutgoingRequestId, Arc<dyn OutgoingRequest>>,
+    outgoing_request_id_next: u128,
+    outgoing_buffer: OutgoingBuffer,
+    reader_task: Option<JoinHandle<()>>,
+    reader_state: ReaderState,
+    error: Option<Error>,
+}
+impl SessionState {
+    fn new() -> Self {
+        Self {
+            incoming_requests: HashMap::new(),
+            outgoing_requests: HashMap::new(),
+            outgoing_buffer: OutgoingBuffer::new(),
+            outgoing_request_id_next: 0,
+            reader_task: None,
+            reader_state: ReaderState::Running,
+            error: None,
+        }
+    }
+    fn insert_incoming_request(&mut self, id: &RequestId) -> bool {
+        let state = IncomingRequestState::new();
+        match self.incoming_requests.entry(id.clone()) {
+            hash_map::Entry::Occupied(_) => {
+                self.outgoing_buffer.push(MessageData::from_error(
+                    Some(id.clone()),
+                    Error::RequestIdReused(id.clone()),
+                ));
+                false
+            }
+            hash_map::Entry::Vacant(e) => {
+                e.insert(state);
+                true
+            }
+        }
+    }
+
+    fn insert_outgoing_request<T>(
+        &mut self,
+    ) -> Result<(OutgoingRequestId, Arc<Mutex<OutgoingRequestState<T>>>)>
+    where
+        T: DeserializeOwned + Send + Sync + 'static,
+    {
+        if self.outgoing_request_id_next == u128::MAX {
+            return Err(Error::RequestIdOverflow);
+        }
+        let id = OutgoingRequestId(self.outgoing_request_id_next);
+        self.outgoing_request_id_next += 1;
+        let state = Arc::new(Mutex::new(OutgoingRequestState::<T>::new()));
+        self.outgoing_requests.insert(id, state.clone());
+        Ok((id, state))
+    }
+
+    fn set_reader_task(&mut self, task: JoinHandle<()>) {
+        if self.reader_state != ReaderState::Running {
+            task.abort();
+        } else {
+            self.reader_task = Some(task);
+        }
+    }
+}
+
 struct RawSession(Mutex<SessionState>);
 
 impl RawSession {
@@ -489,6 +511,14 @@ impl RawSession {
         self.lock().outgoing_buffer.push(m);
         Ok(())
     }
+
+    fn set_error(&self, e: Error) {
+        let mut s = self.lock();
+        if s.error.is_some() {
+            return;
+        }
+        s.error = Some(e);
+    }
 }
 
 pub struct Session(Arc<RawSession>);
@@ -500,7 +530,8 @@ impl Session {
         writer: impl MessageWrite + Send + Sync + 'static,
     ) -> Self {
         let session = RawSession::new();
-        let task_read = spawn(MessageDispatcher::run(session.clone(), handler, reader));
+        let reader_task = spawn(MessageDispatcher::run(session.clone(), handler, reader));
+        session.lock().set_reader_task(reader_task);
 
         todo!()
     }
