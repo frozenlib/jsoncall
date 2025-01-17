@@ -176,7 +176,7 @@ impl IncomingRequestState {
         &mut self,
         id: &RequestId,
         r: Result<Response>,
-        ahs: &mut AbortingHandles,
+        aborts: &mut AbortingHandles,
         ob: &mut OutgoingBuffer,
     ) -> bool {
         assert!(self.is_init_finished);
@@ -185,7 +185,7 @@ impl IncomingRequestState {
             Ok(r) => match r.0 {
                 RawResponse::Request(RawRequestResponse::Success(data)) => Some(Ok(data)),
                 RawResponse::Request(RawRequestResponse::Spawn(task)) => {
-                    self.task.set_task(task, ahs);
+                    self.task.set_task(task, aborts);
                     None
                 }
                 RawResponse::Notification(_) => unreachable!(),
@@ -225,20 +225,6 @@ impl IncomingRequestState {
             if let Some(e) = response {
                 ob.push(MessageData::from_error(Some(id.clone()), e));
             }
-        }
-    }
-
-    fn can_remove(&self) -> bool {
-        if !self.is_init_finished || !self.is_response_sent {
-            return false;
-        }
-        if self.is_task_finished {
-            return true;
-        }
-        if let Some(task) = &self.task {
-            task.is_finished()
-        } else {
-            true
         }
     }
 }
@@ -410,11 +396,8 @@ where
         let params = Params(&m.params);
         let r = self.handler.request(&m.method, params, cx);
         let s = &mut *self.session.lock();
-        if s.incoming_requests
-            .get_mut(&m.id)
-            .unwrap()
-            .init_finish(&m.id, r, &mut s.outgoing_buffer)
-        {
+        if let Some(ir) = s.incoming_requests.get_mut(&m.id) {
+            ir.init_finish(&m.id, r, &mut s.aborts, &mut s.outgoing_buffer);
             s.remove_incoming_request(&m.id);
         }
     }
@@ -649,11 +632,11 @@ impl RawSession {
         Ok(())
     }
     fn cancel_incoming_request(&self, id: &RequestId, response: Option<Error>) {
-        let s = &mut self.lock();
-        let Some(ir) = s.incoming_requests.get(id) else {
-            return;
-        };
-        ir.task_finish(message, ob)
+        let s = &mut *self.lock();
+        if let Some(ir) = s.incoming_requests.get_mut(id) {
+            ir.cancel(id, response, &mut s.aborts, &mut s.outgoing_buffer);
+            s.incoming_requests.remove(id);
+        }
     }
 
     async fn run_write_task(self: Arc<Self>, writer: impl AsyncWrite + Send + Sync + 'static) {
