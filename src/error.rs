@@ -11,6 +11,7 @@ pub enum Error {
     RequestIdOverflow,
     ParamsMissing,
     ParamsParse(Arc<serde_json::Error>),
+    ResultSerialize(Arc<serde_json::Error>),
     Spawn(tokio::task::JoinError),
     Shutdown,
 }
