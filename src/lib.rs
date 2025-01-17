@@ -94,29 +94,22 @@ impl<'a> RequestContext<'a> {
         .into_response())
     }
     pub fn session(&self) -> SessionContext {
-        SessionContext::new(&self.session)
-    }
-}
-fn to_result(result: Result<impl Serialize>) -> Result<Value> {
-    match serde_json::to_value(result?) {
-        Ok(value) => Ok(value),
-        Err(e) => Err(Error::Serialize(Arc::new(e))),
+        SessionContext::new(self.session)
     }
 }
 
 pub struct NotificationContext<'a> {
-    m: &'a NotificationMessage,
     session: &'a Arc<RawSession>,
 }
 impl<'a> NotificationContext<'a> {
-    fn new(m: &'a NotificationMessage, session: &'a Arc<RawSession>) -> Self {
-        Self { m, session }
+    fn new(session: &'a Arc<RawSession>) -> Self {
+        Self { session }
     }
 
-    fn success(self) -> Result<Response> {
+    pub fn success(self) -> Result<Response> {
         Ok(RawNotificationResponse::Success.into_response())
     }
-    fn spawn(
+    pub fn spawn(
         self,
         future: impl Future<Output = Result<()>> + Send + Sync + 'static,
     ) -> Result<Response> {
@@ -125,8 +118,8 @@ impl<'a> NotificationContext<'a> {
         }))
         .into_response())
     }
-    fn session(&self) -> SessionContext {
-        SessionContext::new(&self.session)
+    pub fn session(&self) -> SessionContext {
+        SessionContext::new(self.session)
     }
 }
 
@@ -432,17 +425,10 @@ where
         s.lock().unwrap().set_ready(result);
     }
 
-    fn on_notification(&self, m: NotificationMessage) {
-
-        //  let cx=NotificationContext::new()
-        // let params=Params(&m.params);
-        // self.handler.notification(&m.method, params, cx)
-        // let cx = SessionContext::new(&self.session);
-        // let handler = self.handler.clone();
-        // let task = spawn(async move {
-        //     handler.dyn_notification(&m.method, m.params, &cx).await;
-        // });
-        // self.session.state.lock().unwrap().insert_task(task);
+    fn on_notification(&mut self, m: NotificationMessage) {
+        let cx = NotificationContext::new(&self.session);
+        let params = Params(&m.params);
+        let _r = self.handler.notification(&m.method, params, cx);
     }
 }
 
