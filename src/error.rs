@@ -15,7 +15,9 @@ pub enum Error {
     Serialize(Arc<serde_json::Error>),
     Deserialize(Arc<serde_json::Error>),
     Spawn(Arc<tokio::task::JoinError>),
-    ReaderEnd,
+    Read(Arc<std::io::Error>),
+    ReadEnd,
+    Write(Arc<std::io::Error>),
     Shutdown,
 }
 impl Error {

@@ -2,12 +2,12 @@ use std::{
     collections::{hash_map, HashMap, VecDeque},
     future::Future,
     mem,
-    pin::Pin,
+    pin::{pin, Pin},
     sync::{Arc, Mutex, MutexGuard, Weak},
     task::{Context, Poll, Waker},
 };
 
-use futures::{AsyncBufRead, Stream};
+use futures::{AsyncBufRead, AsyncWrite, AsyncWriteExt, Stream};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tokio::{spawn, task::JoinHandle};
@@ -355,13 +355,8 @@ where
 {
     async fn run(session: Arc<RawSession>, handler: H, reader: impl MessageRead + Send + Sync) {
         let mut this = Self { session, handler };
-        let ret = this.run_raw(reader).await;
-        let mut s = this.session.lock();
-        match ret {
-            Ok(()) => s.reader_state.set_end(),
-            Err(e) => s.reader_state.set_error(e),
-        }
-        s.apply_error();
+        let r = this.run_raw(reader).await;
+        this.session.lock().finish_read_state(r);
     }
     async fn run_raw(&mut self, mut reader: impl MessageRead + Send + Sync) -> Result<()> {
         while let Some(b) = reader.read().await? {
@@ -433,14 +428,14 @@ enum ReaderState {
 }
 
 impl ReaderState {
-    fn set_end(&mut self) {
-        match self {
-            Self::Running => *self = Self::End,
-            Self::End | Self::Error(_) => {}
+    fn finish(&mut self, r: Result<()>) {
+        match r {
+            Ok(()) => match self {
+                Self::Running => *self = Self::End,
+                Self::End | Self::Error(_) => {}
+            },
+            Err(e) => *self = Self::Error(e),
         }
-    }
-    fn set_error(&mut self, e: Error) {
-        *self = Self::Error(e)
     }
     fn is_running(&self) -> bool {
         matches!(self, Self::Running)
@@ -448,7 +443,7 @@ impl ReaderState {
     fn to_error(&self) -> Option<Error> {
         match self {
             Self::Running => None,
-            Self::End => Some(Error::ReaderEnd),
+            Self::End => Some(Error::ReadEnd),
             Self::Error(e) => Some(e.clone()),
         }
     }
@@ -459,10 +454,10 @@ struct SessionState {
     outgoing_requests: HashMap<OutgoingRequestId, Arc<dyn OutgoingRequest>>,
     outgoing_request_id_next: u128,
     outgoing_buffer: OutgoingBuffer,
-    reader_task: Option<JoinHandle<()>>,
-    reader_state: ReaderState,
-    writer_task: Option<JoinHandle<()>>,
-    writer_error: Option<Error>,
+    read_task: Option<JoinHandle<()>>,
+    read_state: ReaderState,
+    write_task: Option<JoinHandle<()>>,
+    write_error: Option<Error>,
     is_shutdown: bool,
     server_waker: Option<Waker>,
 }
@@ -473,10 +468,10 @@ impl SessionState {
             outgoing_requests: HashMap::new(),
             outgoing_buffer: OutgoingBuffer::new(),
             outgoing_request_id_next: 0,
-            reader_task: None,
-            reader_state: ReaderState::Running,
-            writer_task: None,
-            writer_error: None,
+            read_task: None,
+            read_state: ReaderState::Running,
+            write_task: None,
+            write_error: None,
             is_shutdown: false,
             server_waker: None,
         }
@@ -518,10 +513,10 @@ impl SessionState {
         if self.is_shutdown {
             return Some(Error::Shutdown);
         }
-        if let Some(e) = &self.writer_error {
+        if let Some(e) = &self.write_error {
             return Some(e.clone());
         }
-        if let Some(e) = self.reader_state.to_error() {
+        if let Some(e) = self.read_state.to_error() {
             return Some(e);
         }
         None
@@ -529,11 +524,20 @@ impl SessionState {
     fn server_result(&self) -> Option<Result<()>> {
         if self.is_shutdown {
             Some(Ok(()))
-        } else if let Some(e) = &self.writer_error {
+        } else if let Some(e) = &self.write_error {
             Some(Err(e.clone()))
         } else {
             todo!()
         }
+    }
+
+    fn finish_read_state(&mut self, r: Result<()>) {
+        self.read_state.finish(r);
+        self.apply_error();
+    }
+    fn finish_write_state(&mut self, r: Result<()>) {
+        self.write_error = r.err();
+        self.apply_error();
     }
 
     fn apply_error(&mut self) {
@@ -579,21 +583,48 @@ impl RawSession {
         Ok(())
     }
 
-    async fn read_ongoing_messages(&self, buffer: &mut Vec<MessageData>) -> Result<()> {
+    async fn run_write_task(self: Arc<Self>, writer: impl AsyncWrite + Send + Sync + 'static) {
+        let e = self
+            .run_write_task_raw(writer)
+            .await
+            .map_err(|e| Error::Write(Arc::new(e)));
+        self.lock().finish_write_state(e);
+    }
+
+    async fn run_write_task_raw(
+        self: &Arc<Self>,
+        mut writer: impl AsyncWrite + Send + Sync + 'static,
+    ) -> Result<(), std::io::Error> {
+        let mut messages = Vec::new();
+        let mut writer = pin!(writer);
+        loop {
+            self.read_ongoing_messages(&mut messages).await;
+            for m in messages.drain(..) {
+                writer.write_all(m.0.as_bytes()).await?;
+            }
+            writer.flush().await?;
+        }
+    }
+
+    async fn read_ongoing_messages(self: &Arc<Self>, messages: &mut Vec<MessageData>) {
         struct OutgointBufferSwapper<'a> {
             session: &'a Arc<RawSession>,
             messages: &'a mut Vec<MessageData>,
         }
-        impl<'a> Future for &'a OutgointBufferSwapper<'a> {
+        impl<'a> Future for OutgointBufferSwapper<'a> {
             type Output = ();
 
-            fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-                let mut this = self.as_mut();
+            fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+                let this = self.get_mut();
                 let mut s = this.session.lock();
-                s.outgoing_buffer.poll_swap(this.messages.as_mut(), cx)
+                s.outgoing_buffer.poll_swap(&mut this.messages, cx)
             }
         }
-        todo!()
+        OutgointBufferSwapper {
+            session: self,
+            messages,
+        }
+        .await
     }
 }
 
@@ -603,14 +634,16 @@ impl Session {
     pub fn new(
         handler: impl Handler + Send + Sync + 'static,
         reader: impl MessageRead + Send + Sync + 'static,
-        writer: impl MessageWrite + Send + Sync + 'static,
+        writer: impl AsyncWrite + Send + Sync + 'static,
     ) -> Self {
         let session = RawSession::new();
-        let reader_task = spawn(MessageDispatcher::run(session.clone(), handler, reader));
-        session.lock().reader_task = Some(reader_task);
-        let writer_task = spawn(async {});
-
-        todo!()
+        let read_task = spawn(MessageDispatcher::run(session.clone(), handler, reader));
+        let write_task = spawn(session.clone().run_write_task(writer));
+        let mut s = session.lock();
+        s.read_task = Some(read_task);
+        s.write_task = Some(write_task);
+        drop(s);
+        Self(session)
     }
     pub async fn request<P, R>(&self, method: &str, params: Option<&P>) -> Result<R>
     where
@@ -633,9 +666,9 @@ impl Session {
         todo!()
     }
 
-    fn swap_outgoing_buffer(&self, buffer: &Vec<MessageData>) {
+    fn swap_outgoing_buffer(&self, buffer: &mut Vec<MessageData>) {
         let mut s = self.0.lock();
-        mem::replace(&mut s.outgoing_buffer.messages, VecDeque::new())
+        mem::swap(&mut s.outgoing_buffer.messages, buffer);
     }
 }
 

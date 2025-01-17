@@ -129,7 +129,7 @@ pub(crate) struct RawMessageS<'a, P, R> {
     pub error: Option<ErrorObject>,
 }
 
-pub(crate) struct MessageData(String);
+pub(crate) struct MessageData(pub String);
 
 impl MessageData {
     pub fn new(data: String) -> Self {
