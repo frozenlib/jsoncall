@@ -289,13 +289,13 @@ where
 
 struct OutgoingBuffer {
     messages: Vec<MessageData>,
-    waker: WakeNotifier,
+    waker: WakerStore,
 }
 impl OutgoingBuffer {
     fn new() -> Self {
         Self {
             messages: Vec::new(),
-            waker: WakeNotifier::new(),
+            waker: WakerStore::new(),
         }
     }
     fn push(&mut self, message: MessageData) {
@@ -475,7 +475,7 @@ struct SessionState {
     write_state: IoTaskState,
     is_shutdown: bool,
     aborts: AbortingHandles,
-    server_waker: Option<Waker>,
+    server_waker: WakerStore,
 }
 impl SessionState {
     fn new() -> Self {
@@ -490,7 +490,7 @@ impl SessionState {
             write_state: IoTaskState::Running,
             is_shutdown: false,
             aborts: AbortingHandles::new(),
-            server_waker: None,
+            server_waker: WakerStore::new(),
         }
     }
     fn shutdown(&mut self) {
@@ -498,10 +498,10 @@ impl SessionState {
             return;
         }
         self.is_shutdown = true;
-        self.read_task.abort(&mut self.aborts);
         self.finish_read_state(Ok(()));
-        self.write_task.abort(&mut self.aborts);
         self.finish_write_state(Ok(()));
+        self.read_task.abort(&mut self.aborts);
+        self.write_task.abort(&mut self.aborts);
         for (id, ir) in &mut self.incoming_requests {
             ir.cancel(id, None, &mut self.aborts, &mut self.outgoing_buffer);
         }
@@ -558,27 +558,41 @@ impl SessionState {
             if self.can_exit_write_task() {
                 return Poll::Ready(false);
             }
-            self.outgoing_buffer.waker.set_waker(cx)
+            self.outgoing_buffer.waker.set(cx)
         } else {
             mem::swap(messages, &mut self.outgoing_buffer.messages);
             Poll::Ready(true)
         }
     }
+    fn poll_wait_server(&mut self, cx: &mut Context) -> Poll<()> {
+        if self.read_state.is_running() || self.write_state.is_running() {
+            self.server_waker.set(cx)
+        } else {
+            Poll::Ready(())
+        }
+    }
 
     fn outgoint_request_error(&self) -> Option<Error> {
         if self.is_shutdown {
-            return Some(Error::Shutdown);
+            Some(Error::Shutdown)
+        } else if let IoTaskState::Error(e) = &self.write_state {
+            Some(e.clone())
+        } else if let IoTaskState::Error(e) = &self.read_state {
+            Some(e.clone())
+        } else if let IoTaskState::End = &self.read_state {
+            Some(Error::ReadEnd)
+        } else {
+            None
         }
+    }
+    fn server_error(&self) -> Result<()> {
         if let IoTaskState::Error(e) = &self.write_state {
-            return Some(e.clone());
+            Err(e.clone())
+        } else if let IoTaskState::Error(e) = &self.read_state {
+            Err(e.clone())
+        } else {
+            Ok(())
         }
-        if let IoTaskState::Error(e) = &self.read_state {
-            return Some(e.clone());
-        }
-        if let IoTaskState::End = &self.read_state {
-            return Some(Error::ReadEnd);
-        }
-        None
     }
 
     fn finish_read_state(&mut self, r: Result<()>) {
@@ -708,7 +722,16 @@ impl Session {
         self.0.lock().shutdown();
     }
     pub async fn wait(&self) -> Result<()> {
-        todo!()
+        poll_fn(|cx| self.0.lock().poll_wait_server(cx)).await;
+        loop {
+            let task = self.0.lock().aborts.pop();
+            if let Some(task) = task {
+                let _ = task.await;
+            } else {
+                break;
+            }
+        }
+        self.0.lock().server_error()
     }
 }
 
@@ -779,13 +802,13 @@ impl AbortingHandles {
     }
 }
 
-struct WakeNotifier(Option<Waker>);
+struct WakerStore(Option<Waker>);
 
-impl WakeNotifier {
+impl WakerStore {
     fn new() -> Self {
         Self(None)
     }
-    fn set_waker<T>(&mut self, cx: &mut Context) -> Poll<T> {
+    fn set<T>(&mut self, cx: &mut Context) -> Poll<T> {
         self.0 = Some(cx.waker().clone());
         Poll::Pending
     }
