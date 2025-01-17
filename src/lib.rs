@@ -8,7 +8,7 @@ use std::{
 };
 
 use futures::{AsyncBufRead, Stream};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tokio::{spawn, task::JoinHandle};
 
@@ -442,6 +442,17 @@ impl RawSession {
     fn lock(&self) -> MutexGuard<SessionState> {
         self.0.lock().unwrap()
     }
+    async fn request<P, R>(&self, method: &str, params: Option<&P>) -> Result<R>
+    where
+        P: Serialize,
+        R: DeserializeOwned,
+    {
+        let g = OutgoingRequestGuard::new(self)?;
+        let m = MessageData::from_request(g.id.into(), method, params)?;
+        self.lock().outgoing_buffer.push(m);
+
+        todo!()
+    }
 }
 
 pub struct Session(Arc<RawSession>);
@@ -465,23 +476,19 @@ impl Session {
     }
 }
 
-struct OutgoingRequestGuard {
+struct OutgoingRequestGuard<'a> {
     id: OutgoingRequestId,
     state: Arc<Mutex<OutgoingRequestState>>,
-    session: Arc<Mutex<SessionState>>,
+    session: &'a RawSession,
 }
-impl OutgoingRequestGuard {
-    fn new(session: &Arc<Mutex<SessionState>>) -> Result<Self> {
-        let (id, state) = session.lock().unwrap().insert_outgoing_request()?;
-        Ok(Self {
-            id,
-            state,
-            session: session.clone(),
-        })
+impl<'a> OutgoingRequestGuard<'a> {
+    fn new(session: &'a RawSession) -> Result<Self> {
+        let (id, state) = session.lock().insert_outgoing_request()?;
+        Ok(Self { id, state, session })
     }
 }
 
-impl Future for &'_ OutgoingRequestGuard {
+impl Future for &'_ OutgoingRequestGuard<'_> {
     type Output = Result<Value>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -489,14 +496,10 @@ impl Future for &'_ OutgoingRequestGuard {
     }
 }
 
-impl Drop for OutgoingRequestGuard {
+impl Drop for OutgoingRequestGuard<'_> {
     fn drop(&mut self) {
         // todo cancellation request
-        self.session
-            .lock()
-            .unwrap()
-            .outgoing_requests
-            .remove(&self.id);
+        self.session.lock().outgoing_requests.remove(&self.id);
     }
 }
 

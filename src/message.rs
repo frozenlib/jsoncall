@@ -119,8 +119,8 @@ pub(crate) struct RawMessageS<'a, P, R> {
     pub jsonrpc: JsonRpcVersion,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<RequestId>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub method: Option<Cow<'a, str>>,
+    #[serde(skip_serializing_if = "Option::is_none", borrow)]
+    pub method: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none", borrow)]
     pub params: Option<&'a P>,
     #[serde(skip_serializing_if = "Option::is_none", borrow)]
@@ -136,26 +136,49 @@ impl MessageData {
         Self(data)
     }
 
-    pub fn from_raw_message<P, R>(msg: &RawMessageS<P, R>) -> Result<Self, serde_json::Error>
+    pub fn from_raw_message_s<P, R>(msg: &RawMessageS<P, R>) -> Result<Self>
     where
         P: Serialize,
         R: Serialize,
     {
-        serde_json::to_string(msg).map(Self)
+        serde_json::to_string(msg)
+            .map(Self)
+            .map_err(|e| Error::Serialize(Arc::new(e)))
     }
+    pub fn from_request<P>(id: RequestId, method: &str, params: Option<&P>) -> Result<Self>
+    where
+        P: Serialize,
+    {
+        Self::from_raw_message_s::<P, ()>(&RawMessageS {
+            id: Some(id),
+            method: Some(method),
+            params,
+            ..Default::default()
+        })
+    }
+    pub fn from_notification<P>(method: &str, params: Option<&P>) -> Result<Self>
+    where
+        P: Serialize,
+    {
+        Self::from_raw_message_s::<P, ()>(&RawMessageS {
+            method: Some(method),
+            params,
+            ..Default::default()
+        })
+    }
+
     pub fn from_success<R>(id: RequestId, result: &R) -> Result<Self>
     where
         R: Serialize,
     {
-        Self::from_raw_message::<(), R>(&RawMessageS {
+        Self::from_raw_message_s::<(), R>(&RawMessageS {
             id: Some(id),
             result: Some(result),
             ..Default::default()
         })
-        .map_err(|e| Error::Serialize(Arc::new(e)))
     }
     pub fn from_error(id: Option<RequestId>, e: Error) -> Self {
-        Self::from_raw_message::<(), ()>(&RawMessageS {
+        Self::from_raw_message_s::<(), ()>(&RawMessageS {
             id,
             error: Some(e.into_error_object()),
             ..Default::default()

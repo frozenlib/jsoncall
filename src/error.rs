@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use super::{ErrorObject, RequestId};
 
+#[derive(Debug)]
 pub enum Error {
     ErrorObject(ErrorObject),
     Version(String),
