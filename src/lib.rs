@@ -90,11 +90,8 @@ impl<'a> RequestContext<'a> {
             if let Some(s) = s.0.upgrade() {
                 let message = MessageData::from_result(id.clone(), r);
                 let s = &mut *s.lock();
-                if s.incoming_requests
-                    .get_mut(&id)
-                    .unwrap()
-                    .task_finish(message, &mut s.outgoing_buffer)
-                {
+                if let Some(ir) = s.incoming_requests.get_mut(&id) {
+                    ir.task_finish(message, &mut s.outgoing_buffer);
                     s.remove_incoming_request(&id);
                 }
             }
@@ -179,6 +176,7 @@ impl IncomingRequestState {
         &mut self,
         id: &RequestId,
         r: Result<Response>,
+        ahs: &mut AbortingHandles,
         ob: &mut OutgoingBuffer,
     ) -> bool {
         assert!(self.is_init_finished);
@@ -187,7 +185,7 @@ impl IncomingRequestState {
             Ok(r) => match r.0 {
                 RawResponse::Request(RawRequestResponse::Success(data)) => Some(Ok(data)),
                 RawResponse::Request(RawRequestResponse::Spawn(task)) => {
-                    self.task.set_task(task);
+                    self.task.set_task(task, ahs);
                     None
                 }
                 RawResponse::Notification(_) => unreachable!(),
@@ -200,30 +198,34 @@ impl IncomingRequestState {
                 ob.push(MessageData::from_result_message_data(id.clone(), md));
             }
         }
-        self.can_remove()
+        self.is_response_sent
     }
-    fn task_finish(&mut self, message: MessageData, ob: &mut OutgoingBuffer) -> bool {
+    fn task_finish(&mut self, message: MessageData, ob: &mut OutgoingBuffer) {
         assert!(!self.is_init_finished);
         self.is_task_finished = true;
         if !self.is_response_sent {
             self.is_response_sent = true;
             ob.push(message);
         }
-        self.can_remove()
     }
-    fn cancel(&mut self, id: &RequestId, response: Option<Error>, ob: &mut OutgoingBuffer) -> bool {
+    fn cancel(
+        &mut self,
+        id: &RequestId,
+        response: Option<Error>,
+        ahs: &mut AbortingHandles,
+        ob: &mut OutgoingBuffer,
+    ) {
         if self.is_cancelled {
-            return false;
+            return;
         }
         self.is_cancelled = true;
-        self.task.abort();
+        self.task.abort(ahs);
         if !self.is_response_sent {
             self.is_response_sent = true;
             if let Some(e) = response {
                 ob.push(MessageData::from_error(Some(id.clone()), e));
             }
         }
-        self.can_remove()
     }
 
     fn can_remove(&self) -> bool {
@@ -467,17 +469,17 @@ impl TaskHandle {
             is_abort: false,
         }
     }
-    fn set_task(&mut self, task: JoinHandle<()>) {
+    fn set_task(&mut self, task: JoinHandle<()>, aborts: &mut AbortingHandles) {
         if self.is_abort {
-            task.abort();
+            aborts.push(task);
         } else {
             self.task = Some(task);
         }
     }
-    fn abort(&mut self) {
+    fn abort(&mut self, aborts: &mut AbortingHandles) {
         self.is_abort = true;
         if let Some(task) = self.task.take() {
-            task.abort();
+            aborts.push(task);
         }
     }
 }
@@ -492,6 +494,7 @@ struct SessionState {
     write_task: TaskHandle,
     write_state: IoTaskState,
     is_shutdown: bool,
+    aborts: AbortingHandles,
     server_waker: Option<Waker>,
 }
 impl SessionState {
@@ -506,6 +509,7 @@ impl SessionState {
             write_task: TaskHandle::new(),
             write_state: IoTaskState::Running,
             is_shutdown: false,
+            aborts: AbortingHandles::new(),
             server_waker: None,
         }
     }
@@ -786,6 +790,11 @@ impl AbortingHandles {
         Self(Vec::new())
     }
     fn push(&mut self, task: JoinHandle<()>) {
+        if task.is_finished() {
+            return;
+        }
+        task.abort();
+
         let old_capacity = self.0.capacity();
         if old_capacity == self.0.len() {
             self.0.retain(|t| !t.is_finished());
