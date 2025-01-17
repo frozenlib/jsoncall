@@ -1,4 +1,4 @@
-use std::{borrow::Cow, sync::Arc};
+use std::sync::Arc;
 
 use derive_ex::derive_ex;
 use ordered_float::OrderedFloat;
@@ -107,7 +107,7 @@ impl<T: Serialize> Serialize for CowEx<'_, T> {
         }
     }
 }
-impl<'a, 'de, T: Deserialize<'de>> Deserialize<'de> for CowEx<'a, T> {
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for CowEx<'_, T> {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         T::deserialize(deserializer).map(CowEx::Owned)
     }

@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map, HashMap, VecDeque},
+    collections::{hash_map, HashMap},
     future::Future,
     mem,
     pin::{pin, Pin},
@@ -7,7 +7,7 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-use futures::{AsyncBufRead, AsyncWrite, AsyncWriteExt, Stream};
+use futures::{AsyncWrite, AsyncWriteExt};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tokio::{spawn, task::JoinHandle};
