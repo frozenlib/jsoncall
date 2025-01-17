@@ -286,7 +286,7 @@ pub(super) struct NotificationMessage {
     pub params: Option<Map<String, Value>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ErrorObject {
     pub code: i64,
     pub message: String,

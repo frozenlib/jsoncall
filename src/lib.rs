@@ -277,20 +277,31 @@ where
 }
 
 struct OutgoingBuffer {
-    messages: VecDeque<MessageData>,
+    messages: Vec<MessageData>,
     waker: Option<Waker>,
 }
 impl OutgoingBuffer {
     fn new() -> Self {
         Self {
-            messages: VecDeque::new(),
+            messages: Vec::new(),
             waker: None,
         }
     }
     fn push(&mut self, message: MessageData) {
-        self.messages.push_back(message);
+        self.messages.push(message);
         if let Some(waker) = self.waker.take() {
             waker.wake();
+        }
+    }
+
+    fn poll_swap(&mut self, messages: &mut Vec<MessageData>, cx: &mut Context) -> Poll<()> {
+        assert!(messages.is_empty());
+        if self.messages.is_empty() {
+            self.waker = Some(cx.waker().clone());
+            Poll::Pending
+        } else {
+            mem::swap(&mut self.messages, messages);
+            Poll::Ready(())
         }
     }
 }
@@ -343,14 +354,16 @@ where
     H: Handler + Send + Sync,
 {
     async fn run(session: Arc<RawSession>, handler: H, reader: impl MessageRead + Send + Sync) {
-        Self { session, handler }.run_raw_0(reader).await
-    }
-    async fn run_raw_0(&mut self, reader: impl MessageRead + Send + Sync) {
-        if let Err(e) = self.run_raw_1(reader).await {
-            // todo IOError通知
+        let mut this = Self { session, handler };
+        let ret = this.run_raw(reader).await;
+        let mut s = this.session.lock();
+        match ret {
+            Ok(()) => s.reader_state.set_end(),
+            Err(e) => s.reader_state.set_error(e),
         }
+        s.apply_error();
     }
-    async fn run_raw_1(&mut self, mut reader: impl MessageRead + Send + Sync) -> Result<()> {
+    async fn run_raw(&mut self, mut reader: impl MessageRead + Send + Sync) -> Result<()> {
         while let Some(b) = reader.read().await? {
             for m in b {
                 self.on_message_one(m).await;
@@ -412,12 +425,33 @@ where
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Debug)]
 enum ReaderState {
     Running,
     End,
-    Shutdown,
-    Error,
+    Error(Error),
+}
+
+impl ReaderState {
+    fn set_end(&mut self) {
+        match self {
+            Self::Running => *self = Self::End,
+            Self::End | Self::Error(_) => {}
+        }
+    }
+    fn set_error(&mut self, e: Error) {
+        *self = Self::Error(e)
+    }
+    fn is_running(&self) -> bool {
+        matches!(self, Self::Running)
+    }
+    fn to_error(&self) -> Option<Error> {
+        match self {
+            Self::Running => None,
+            Self::End => Some(Error::ReaderEnd),
+            Self::Error(e) => Some(e.clone()),
+        }
+    }
 }
 
 struct SessionState {
@@ -427,7 +461,10 @@ struct SessionState {
     outgoing_buffer: OutgoingBuffer,
     reader_task: Option<JoinHandle<()>>,
     reader_state: ReaderState,
-    error: Option<Error>,
+    writer_task: Option<JoinHandle<()>>,
+    writer_error: Option<Error>,
+    is_shutdown: bool,
+    server_waker: Option<Waker>,
 }
 impl SessionState {
     fn new() -> Self {
@@ -438,7 +475,10 @@ impl SessionState {
             outgoing_request_id_next: 0,
             reader_task: None,
             reader_state: ReaderState::Running,
-            error: None,
+            writer_task: None,
+            writer_error: None,
+            is_shutdown: false,
+            server_waker: None,
         }
     }
     fn insert_incoming_request(&mut self, id: &RequestId) -> bool {
@@ -474,11 +514,38 @@ impl SessionState {
         Ok((id, state))
     }
 
-    fn set_reader_task(&mut self, task: JoinHandle<()>) {
-        if self.reader_state != ReaderState::Running {
-            task.abort();
+    fn outgoint_request_error(&self) -> Option<Error> {
+        if self.is_shutdown {
+            return Some(Error::Shutdown);
+        }
+        if let Some(e) = &self.writer_error {
+            return Some(e.clone());
+        }
+        if let Some(e) = self.reader_state.to_error() {
+            return Some(e);
+        }
+        None
+    }
+    fn server_result(&self) -> Option<Result<()>> {
+        if self.is_shutdown {
+            Some(Ok(()))
+        } else if let Some(e) = &self.writer_error {
+            Some(Err(e.clone()))
         } else {
-            self.reader_task = Some(task);
+            todo!()
+        }
+    }
+
+    fn apply_error(&mut self) {
+        if let Some(e) = self.outgoint_request_error() {
+            for r in self.outgoing_requests.values() {
+                r.set_ready(Err(e.clone()));
+            }
+        }
+        if self.server_result().is_some() {
+            if let Some(waker) = self.server_waker.take() {
+                waker.wake();
+            }
         }
     }
 }
@@ -512,12 +579,21 @@ impl RawSession {
         Ok(())
     }
 
-    fn set_error(&self, e: Error) {
-        let mut s = self.lock();
-        if s.error.is_some() {
-            return;
+    async fn read_ongoing_messages(&self, buffer: &mut Vec<MessageData>) -> Result<()> {
+        struct OutgointBufferSwapper<'a> {
+            session: &'a Arc<RawSession>,
+            messages: &'a mut Vec<MessageData>,
         }
-        s.error = Some(e);
+        impl<'a> Future for &'a OutgointBufferSwapper<'a> {
+            type Output = ();
+
+            fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+                let mut this = self.as_mut();
+                let mut s = this.session.lock();
+                s.outgoing_buffer.poll_swap(this.messages.as_mut(), cx)
+            }
+        }
+        todo!()
     }
 }
 
@@ -531,7 +607,8 @@ impl Session {
     ) -> Self {
         let session = RawSession::new();
         let reader_task = spawn(MessageDispatcher::run(session.clone(), handler, reader));
-        session.lock().set_reader_task(reader_task);
+        session.lock().reader_task = Some(reader_task);
+        let writer_task = spawn(async {});
 
         todo!()
     }
@@ -555,6 +632,11 @@ impl Session {
     pub async fn shutdown(&self) -> Result<()> {
         todo!()
     }
+
+    fn swap_outgoing_buffer(&self, buffer: &Vec<MessageData>) {
+        let mut s = self.0.lock();
+        mem::replace(&mut s.outgoing_buffer.messages, VecDeque::new())
+    }
 }
 
 struct OutgoingRequestGuard<'a, T> {
@@ -567,7 +649,11 @@ where
     T: DeserializeOwned + Send + Sync + 'static,
 {
     fn new(session: &'a RawSession) -> Result<Self> {
-        let (id, state) = session.lock().insert_outgoing_request()?;
+        let mut s = session.lock();
+        if let Some(e) = s.outgoint_request_error() {
+            return Err(e);
+        }
+        let (id, state) = s.insert_outgoing_request()?;
         Ok(Self { id, state, session })
     }
 }
@@ -587,34 +673,5 @@ impl<T> Drop for OutgoingRequestGuard<'_, T> {
     fn drop(&mut self) {
         // todo cancellation request
         self.session.lock().outgoing_requests.remove(&self.id);
-    }
-}
-
-pub struct SessionBuilder(BoxMessageReader);
-impl SessionBuilder {
-    pub fn from_async_buf_read(reader: impl AsyncBufRead) -> Self {
-        todo!()
-    }
-    pub fn from_stream(
-        stream: impl Stream<Item = Result<MessageBatch>> + Send + Sync + 'static,
-    ) -> Self {
-        todo!()
-    }
-    pub fn from_reader(reader: impl MessageRead + Send + Sync + 'static) -> Self {
-        Self(reader.boxed())
-    }
-
-    pub fn build(
-        handler: impl Handler,
-        writer: impl MessageWrite + Send + Sync + 'static,
-    ) -> Session {
-        todo!()
-    }
-    pub fn build_stream(handler: impl Handler) -> impl Stream<Item = Result<MessageBatch>> {
-        // todo
-        futures::stream::empty()
-    }
-    pub fn build_stdio(handler: impl Handler) -> Session {
-        todo!()
     }
 }

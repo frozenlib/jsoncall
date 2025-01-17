@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::{ErrorObject, RequestId};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Error {
     ErrorObject(ErrorObject),
     Version(String),
@@ -14,7 +14,8 @@ pub enum Error {
     ParamsParse(Arc<serde_json::Error>),
     Serialize(Arc<serde_json::Error>),
     Deserialize(Arc<serde_json::Error>),
-    Spawn(tokio::task::JoinError),
+    Spawn(Arc<tokio::task::JoinError>),
+    ReaderEnd,
     Shutdown,
 }
 impl Error {
