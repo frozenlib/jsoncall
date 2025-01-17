@@ -13,6 +13,7 @@ pub enum Error {
     ParamsMissing,
     ParamsParse(Arc<serde_json::Error>),
     Serialize(Arc<serde_json::Error>),
+    Deserialize(Arc<serde_json::Error>),
     Spawn(tokio::task::JoinError),
     Shutdown,
 }

@@ -4,6 +4,7 @@
   - メッセージ送信処理
     - まず RawSession にヘルパメソッドを実装
     - Session と SessionContext にメソッドを実装
+    - notify の実装
   - キャンセル対応
   - シャットダウン
   - notify のエラーをロギング

@@ -215,17 +215,32 @@ impl IncomingRequestState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct OutgoingRequestId(u128);
 
-enum OutgoingRequestState {
+trait OutgoingRequest: Send + Sync + 'static {
+    fn set_ready(&self, result: Result<Value>);
+}
+impl<T> OutgoingRequest for Mutex<OutgoingRequestState<T>>
+where
+    T: DeserializeOwned + Send + Sync + 'static,
+{
+    fn set_ready(&self, result: Result<Value>) {
+        self.lock().unwrap().set_ready(result);
+    }
+}
+
+enum OutgoingRequestState<T> {
     None,
     Waker(Waker),
-    Ready(Result<Value>),
+    Ready(Result<T>),
     End,
 }
-impl OutgoingRequestState {
+impl<T> OutgoingRequestState<T>
+where
+    T: DeserializeOwned,
+{
     fn new() -> Self {
         Self::None
     }
-    fn poll(&mut self, waker: &Waker) -> Poll<Result<Value>> {
+    fn poll(&mut self, waker: &Waker) -> Poll<Result<T>> {
         match self {
             Self::None | Self::Waker(_) => {
                 *self = Self::Waker(waker.clone());
@@ -245,6 +260,10 @@ impl OutgoingRequestState {
         }
     }
     fn set_ready(&mut self, result: Result<Value>) {
+        let result = match result {
+            Ok(value) => serde_json::from_value(value).map_err(|e| Error::Deserialize(Arc::new(e))),
+            Err(e) => Err(e),
+        };
         let old = mem::replace(self, Self::Ready(result));
         match old {
             OutgoingRequestState::None => {}
@@ -298,10 +317,13 @@ impl SessionContext {
             Err(Error::Shutdown)
         }
     }
-    pub async fn request(&self, method: &str, params: Option<Map<String, Value>>) -> Result<Value> {
+    pub async fn request<P, R>(&self, method: &str, params: Option<&P>) -> Result<R>
+    where
+        P: Serialize,
+        R: DeserializeOwned,
+    {
         if let Some(s) = self.0.upgrade() {
-            todo!()
-            // s.send_request(method, params).await
+            s.request(method, params).await
         } else {
             Err(Error::Shutdown)
         }
@@ -310,7 +332,7 @@ impl SessionContext {
 
 struct SessionState {
     incoming_requests: HashMap<RequestId, IncomingRequestState>,
-    outgoing_requests: HashMap<OutgoingRequestId, Arc<Mutex<OutgoingRequestState>>>,
+    outgoing_requests: HashMap<OutgoingRequestId, Arc<dyn OutgoingRequest>>,
     outgoing_request_id_next: u128,
     outgoing_buffer: OutgoingBuffer,
 }
@@ -340,15 +362,18 @@ impl SessionState {
         }
     }
 
-    fn insert_outgoing_request(
+    fn insert_outgoing_request<T>(
         &mut self,
-    ) -> Result<(OutgoingRequestId, Arc<Mutex<OutgoingRequestState>>)> {
+    ) -> Result<(OutgoingRequestId, Arc<Mutex<OutgoingRequestState<T>>>)>
+    where
+        T: DeserializeOwned + Send + Sync + 'static,
+    {
         if self.outgoing_request_id_next == u128::MAX {
             return Err(Error::RequestIdOverflow);
         }
         let id = OutgoingRequestId(self.outgoing_request_id_next);
         self.outgoing_request_id_next += 1;
-        let state = Arc::new(Mutex::new(OutgoingRequestState::new()));
+        let state = Arc::new(Mutex::new(OutgoingRequestState::<T>::new()));
         self.outgoing_requests.insert(id, state.clone());
         Ok((id, state))
     }
@@ -422,7 +447,7 @@ where
         let Some(s) = s else {
             return;
         };
-        s.lock().unwrap().set_ready(result);
+        s.set_ready(result);
     }
 
     fn on_notification(&mut self, m: NotificationMessage) {
@@ -476,27 +501,33 @@ impl Session {
     }
 }
 
-struct OutgoingRequestGuard<'a> {
+struct OutgoingRequestGuard<'a, T> {
     id: OutgoingRequestId,
-    state: Arc<Mutex<OutgoingRequestState>>,
+    state: Arc<Mutex<OutgoingRequestState<T>>>,
     session: &'a RawSession,
 }
-impl<'a> OutgoingRequestGuard<'a> {
+impl<'a, T> OutgoingRequestGuard<'a, T>
+where
+    T: DeserializeOwned + Send + Sync + 'static,
+{
     fn new(session: &'a RawSession) -> Result<Self> {
         let (id, state) = session.lock().insert_outgoing_request()?;
         Ok(Self { id, state, session })
     }
 }
 
-impl Future for &'_ OutgoingRequestGuard<'_> {
-    type Output = Result<Value>;
+impl<T> Future for &'_ OutgoingRequestGuard<'_, T>
+where
+    T: DeserializeOwned + Send + Sync + 'static,
+{
+    type Output = Result<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.state.lock().unwrap().poll(cx.waker())
     }
 }
 
-impl Drop for OutgoingRequestGuard<'_> {
+impl<T> Drop for OutgoingRequestGuard<'_, T> {
     fn drop(&mut self) {
         // todo cancellation request
         self.session.lock().outgoing_requests.remove(&self.id);
