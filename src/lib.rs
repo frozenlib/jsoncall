@@ -784,3 +784,20 @@ impl AbortingHandles {
         }
     }
 }
+
+struct WakerStore(Option<Waker>);
+
+impl WakerStore {
+    fn new() -> Self {
+        Self(None)
+    }
+    fn poll<T>(&mut self, cx: &mut Context) -> Poll<T> {
+        self.0 = Some(cx.waker().clone());
+        Poll::Pending
+    }
+    fn wake(&mut self) {
+        if let Some(waker) = self.0.take() {
+            waker.wake();
+        }
+    }
+}
