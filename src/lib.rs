@@ -74,21 +74,24 @@ impl<'a> RequestContext<'a> {
     where
         T: Serialize,
     {
-        Ok(Response(RawResponse::Data(MessageData::from_success(
-            &self.m.id, result,
-        )?)))
+        let id = self.m.id.clone();
+        Ok(RawRequestResponse::Success(MessageData::from_success(id, result)?).into_response())
     }
     pub fn spawn(
         self,
-        task: impl Future<Output = Result<impl Serialize>> + Send + Sync + 'static,
+        future: impl Future<Output = Result<impl Serialize>> + Send + Sync + 'static,
     ) -> Result<Response> {
         let id = self.m.id.clone();
         let s = self.session();
-        Ok(Response(RawResponse::Spawn(spawn(async move {
+        Ok(RawRequestResponse::Spawn(spawn(async move {
+            let r = future.await;
             if let Some(s) = s.0.upgrade() {
-                s.send_response(Some(id), to_result(task.await)).await;
+                s.lock()
+                    .outgoing_buffer
+                    .push(MessageData::from_result(id, r));
             }
-        }))))
+        }))
+        .into_response())
     }
     pub fn session(&self) -> SessionContext {
         SessionContext::new(&self.session)
@@ -102,7 +105,7 @@ fn to_result(result: Result<impl Serialize>) -> Result<Value> {
 }
 
 pub struct NotificationContext<'a> {
-    m:&'a NotificationMessage,
+    m: &'a NotificationMessage,
     session: &'a Arc<RawSession>,
 }
 impl<'a> NotificationContext<'a> {
@@ -111,18 +114,45 @@ impl<'a> NotificationContext<'a> {
     }
 
     fn success(self) -> Result<Response> {
+        Ok(RawNotificationResponse::Success.into_response())
     }
-    fn spawn(self, task: impl Future<Output = ()> + Send + Sync + 'static) -> Result<Response> {
-        todo!()
+    fn spawn(
+        self,
+        future: impl Future<Output = Result<()>> + Send + Sync + 'static,
+    ) -> Result<Response> {
+        Ok(RawNotificationResponse::Spawn(spawn(async move {
+            let _ = future.await;
+        }))
+        .into_response())
     }
     fn session(&self) -> SessionContext {
-        todo!()
+        SessionContext::new(&self.session)
+    }
+}
+
+enum RawRequestResponse {
+    Success(MessageData),
+    Spawn(JoinHandle<()>),
+}
+impl RawRequestResponse {
+    fn into_response(self) -> Response {
+        Response(RawResponse::Request(self))
+    }
+}
+
+enum RawNotificationResponse {
+    Success,
+    Spawn(JoinHandle<()>),
+}
+impl RawNotificationResponse {
+    fn into_response(self) -> Response {
+        Response(RawResponse::Notification(self))
     }
 }
 
 enum RawResponse {
-    Data(MessageData),
-    Spawn(JoinHandle<()>),
+    Request(RawRequestResponse),
+    Notification(RawNotificationResponse),
 }
 
 pub struct Response(RawResponse);
@@ -145,14 +175,16 @@ impl IncomingRequestState {
         }
     }
     fn init_finish(&mut self, id: &RequestId, r: Result<Response>, ob: &mut OutgoingBuffer) {
+        assert!(self.is_init_finished);
         self.is_init_finished = true;
         let md = match r {
             Ok(r) => match r.0 {
-                RawResponse::Data(data) => Some(Ok(data)),
-                RawResponse::Spawn(task) => {
+                RawResponse::Request(RawRequestResponse::Success(data)) => Some(Ok(data)),
+                RawResponse::Request(RawRequestResponse::Spawn(task)) => {
                     self.task = Some(task);
                     None
                 }
+                RawResponse::Notification(_) => unreachable!(),
             },
             Err(e) => Some(Err(e)),
         };
@@ -161,6 +193,14 @@ impl IncomingRequestState {
                 self.is_response_sent = true;
                 ob.push(MessageData::from_result_message_data(id.clone(), md));
             }
+        }
+    }
+    fn task_finish(&mut self, message: MessageData, ob: &mut OutgoingBuffer) {
+        assert!(!self.is_init_finished);
+        self.is_task_finished = true;
+        if !self.is_response_sent {
+            self.is_response_sent = true;
+            ob.push(message);
         }
     }
 
@@ -179,7 +219,7 @@ impl IncomingRequestState {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct OutgoingRequestId(u128);
 
 enum OutgoingRequestState {
@@ -222,66 +262,6 @@ impl OutgoingRequestState {
     }
 }
 
-// #[derive(Clone)]
-// pub struct RequestContext {
-//     id: RequestId,
-//     state: Arc<Mutex<IncomingRequestState>>,
-//     cx: SessionContext,
-// }
-
-// impl RequestContext {
-//     fn new(id: RequestId, state: &Arc<Mutex<IncomingRequestState>>, cx: SessionContext) -> Self {
-//         let state = state.clone();
-//         Self { id, state, cx }
-//     }
-
-//     pub fn id(&self) -> &RequestId {
-//         &self.id
-//     }
-//     pub fn is_cancelled(&self) -> bool {
-//         matches!(*self.state.lock().unwrap(), IncomingRequestState::Cancelled)
-//     }
-//     async fn send_response(&self, result: Result<Value>) {
-//         let Some(s) = self.cx.0.upgrade() else {
-//             return;
-//         };
-//         s.send_response(Some(self.id.clone()), result).await;
-//         s.state.lock().unwrap().incoming_requests.remove(&self.id);
-//         self.state.lock().unwrap().on_finished();
-//     }
-// }
-
-#[derive(Clone)]
-pub struct SessionContext(Weak<RawSession>);
-
-impl SessionContext {
-    fn new(session: &Arc<RawSession>) -> Self {
-        Self(Arc::downgrade(session))
-    }
-}
-
-impl SessionContext {
-    pub fn cancel_request(&self, id: &RequestId) {
-        if let Some(s) = self.0.upgrade() {
-            s.cancel_request(id);
-        }
-    }
-    pub async fn notification(&self, name: &str, params: Option<Map<String, Value>>) -> Result<()> {
-        if let Some(s) = self.0.upgrade() {
-            s.send_notification(name, params).await
-        } else {
-            Err(Error::Shutdown)
-        }
-    }
-    pub async fn request(&self, method: &str, params: Option<Map<String, Value>>) -> Result<Value> {
-        if let Some(s) = self.0.upgrade() {
-            s.send_request(method, params).await
-        } else {
-            Err(Error::Shutdown)
-        }
-    }
-}
-
 struct OutgoingBuffer {
     messages: VecDeque<MessageData>,
     waker: Option<Waker>,
@@ -297,6 +277,40 @@ impl OutgoingBuffer {
         self.messages.push_back(message);
         if let Some(waker) = self.waker.take() {
             waker.wake();
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct SessionContext(Weak<RawSession>);
+
+impl SessionContext {
+    fn new(session: &Arc<RawSession>) -> Self {
+        Self(Arc::downgrade(session))
+    }
+}
+
+impl SessionContext {
+    pub fn cancel_request(&self, id: &RequestId) {
+        if let Some(s) = self.0.upgrade() {
+            todo!()
+            //s.cancel_request(id);
+        }
+    }
+    pub async fn notification(&self, name: &str, params: Option<Map<String, Value>>) -> Result<()> {
+        if let Some(s) = self.0.upgrade() {
+            todo!()
+            // s.send_notification(name, params).await
+        } else {
+            Err(Error::Shutdown)
+        }
+    }
+    pub async fn request(&self, method: &str, params: Option<Map<String, Value>>) -> Result<Value> {
+        if let Some(s) = self.0.upgrade() {
+            todo!()
+            // s.send_request(method, params).await
+        } else {
+            Err(Error::Shutdown)
         }
     }
 }
@@ -321,7 +335,7 @@ impl SessionState {
         match self.incoming_requests.entry(id.clone()) {
             hash_map::Entry::Occupied(_) => {
                 self.outgoing_buffer.push(MessageData::from_error(
-                    None,
+                    Some(id.clone()),
                     Error::RequestIdReused(id.clone()),
                 ));
                 false
@@ -333,15 +347,16 @@ impl SessionState {
         }
     }
 
-    fn insert_outgoing_request(&mut self) -> Result<(u128, Arc<Mutex<OutgoingRequestState>>)> {
+    fn insert_outgoing_request(
+        &mut self,
+    ) -> Result<(OutgoingRequestId, Arc<Mutex<OutgoingRequestState>>)> {
         if self.outgoing_request_id_next == u128::MAX {
             return Err(Error::RequestIdOverflow);
         }
-        let id = self.outgoing_request_id_next;
+        let id = OutgoingRequestId(self.outgoing_request_id_next);
         self.outgoing_request_id_next += 1;
         let state = Arc::new(Mutex::new(OutgoingRequestState::new()));
-        self.outgoing_requests
-            .insert(OutgoingRequestId(id), state.clone());
+        self.outgoing_requests.insert(id, state.clone());
         Ok((id, state))
     }
 }
@@ -359,7 +374,7 @@ where
     }
     async fn run_raw_0(&mut self, reader: impl MessageRead + Send + Sync) {
         if let Err(e) = self.run_raw_1(reader).await {
-            self.session.set_io_error(e);
+            // todo IOError通知
         }
     }
     async fn run_raw_1(&mut self, mut reader: impl MessageRead + Send + Sync) -> Result<()> {
@@ -374,7 +389,12 @@ where
         let id = m.id.clone();
         match self.dispatch_message(m) {
             Ok(()) => {}
-            Err(e) => self.session.send_response(id, Err(e)).await,
+            Err(e) => {
+                self.session
+                    .lock()
+                    .outgoing_buffer
+                    .push(MessageData::from_error(id, e));
+            }
         }
     }
     fn dispatch_message(&mut self, m: Message) -> Result<()> {
@@ -414,15 +434,15 @@ where
 
     fn on_notification(&self, m: NotificationMessage) {
 
-        let cx=NotificationContext::new()
-        let params=Params(&m.params);
-        self.handler.notification(&m.method, params, cx)
-        let cx = SessionContext::new(&self.session);
-        let handler = self.handler.clone();
-        let task = spawn(async move {
-            handler.dyn_notification(&m.method, m.params, &cx).await;
-        });
-        self.session.state.lock().unwrap().insert_task(task);
+        //  let cx=NotificationContext::new()
+        // let params=Params(&m.params);
+        // self.handler.notification(&m.method, params, cx)
+        // let cx = SessionContext::new(&self.session);
+        // let handler = self.handler.clone();
+        // let task = spawn(async move {
+        //     handler.dyn_notification(&m.method, m.params, &cx).await;
+        // });
+        // self.session.state.lock().unwrap().insert_task(task);
     }
 }
 
@@ -435,55 +455,6 @@ impl RawSession {
 
     fn lock(&self) -> MutexGuard<SessionState> {
         self.0.lock().unwrap()
-    }
-
-    fn set_io_error(self: &Arc<Self>, e: Error) {
-        todo!()
-    }
-
-    async fn send_request(
-        &self,
-        method: &str,
-        params: Option<Map<String, Value>>,
-    ) -> Result<Value> {
-        let s = OutgoingRequestStateGuard::new(&self.state)?;
-        let m = Message {
-            id: Some(s.id.into()),
-            method: Some(method.into()),
-            params,
-            ..Message::default()
-        };
-        self.writer.lock().await.write(m.into()).await?;
-        (&s).await
-    }
-
-    async fn send_response(&self, id: Option<RequestId>, result: Result<Value>) {
-        todo!()
-    }
-    async fn send_notification(
-        &self,
-        method: &str,
-        params: Option<Map<String, Value>>,
-    ) -> Result<()> {
-        let m = Message {
-            method: Some(method.into()),
-            params,
-            ..Message::default()
-        };
-        self.writer.lock().await.write(m.into()).await
-    }
-    fn cancel_request(&self, id: &RequestId) {
-        let state = self.state.lock().unwrap().incoming_requests.remove(id);
-        if let Some(state) = state {
-            let task = state.lock().unwrap().on_cancelled();
-            if let Some(task) = task {
-                self.state.lock().unwrap().insert_task(task);
-            }
-        }
-    }
-
-    fn log_error(&self, result: Result<()>) {
-        todo!()
     }
 }
 
@@ -516,24 +487,13 @@ impl Session {
     pub fn context(self: Arc<Self>) -> SessionContext {
         SessionContext::new(&self.0)
     }
-    pub async fn request(&self, method: &str, params: Option<Map<String, Value>>) -> Result<Value> {
-        self.session.send_request(method, params).await
-    }
-    pub async fn notification(
-        &self,
-        method: &str,
-        params: Option<Map<String, Value>>,
-    ) -> Result<()> {
-        self.session.send_notification(method, params).await
-    }
-
     pub async fn shutdown(&self) -> Result<()> {
         todo!()
     }
 }
 
 struct OutgoingRequestStateGuard {
-    id: u128,
+    id: OutgoingRequestId,
     state: Arc<Mutex<OutgoingRequestState>>,
     session: Arc<Mutex<SessionState>>,
 }

@@ -143,12 +143,12 @@ impl MessageData {
     {
         serde_json::to_string(msg).map(Self)
     }
-    pub fn from_success<R>(id: &RequestId, result: &R) -> Result<Self>
+    pub fn from_success<R>(id: RequestId, result: &R) -> Result<Self>
     where
         R: Serialize,
     {
         Self::from_raw_message::<(), R>(&RawMessageS {
-            id: Some(id.clone()),
+            id: Some(id),
             result: Some(result),
             ..Default::default()
         })
@@ -161,6 +161,16 @@ impl MessageData {
             ..Default::default()
         })
         .unwrap()
+    }
+    pub fn from_result(id: RequestId, r: Result<impl Serialize>) -> Self {
+        let e = match r {
+            Ok(data) => match Self::from_success(id.clone(), &data) {
+                Ok(data) => return data,
+                Err(e) => e,
+            },
+            Err(e) => e,
+        };
+        Self::from_error(Some(id), e)
     }
     pub fn from_result_message_data(id: RequestId, md: Result<Self>) -> Self {
         match md {
