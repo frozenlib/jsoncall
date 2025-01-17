@@ -599,7 +599,8 @@ impl RawSession {
         let mut writer = pin!(writer);
         loop {
             self.read_ongoing_messages(&mut messages).await;
-            for m in messages.drain(..) {
+            for mut m in messages.drain(..) {
+                m.0.push('\n');
                 writer.write_all(m.0.as_bytes()).await?;
             }
             writer.flush().await?;
