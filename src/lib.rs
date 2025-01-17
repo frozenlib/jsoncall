@@ -1,6 +1,6 @@
 use std::{
     collections::{hash_map, HashMap},
-    future::Future,
+    future::{poll_fn, Future},
     mem,
     pin::{pin, Pin},
     sync::{Arc, Mutex, MutexGuard, Weak},
@@ -666,25 +666,8 @@ impl RawSession {
     }
 
     async fn read_ongoing_messages(self: &Arc<Self>, messages: &mut Vec<MessageData>) -> bool {
-        struct OutgointBufferSwapper<'a> {
-            session: &'a Arc<RawSession>,
-            messages: &'a mut Vec<MessageData>,
-        }
-        impl Future for OutgointBufferSwapper<'_> {
-            type Output = bool;
-            fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-                assert!(self.messages.is_empty());
-                let this = self.get_mut();
-                this.session
-                    .lock()
-                    .poll_swap_outgoing_messages(this.messages, cx)
-            }
-        }
-        OutgointBufferSwapper {
-            session: self,
-            messages,
-        }
-        .await
+        assert!(messages.is_empty());
+        poll_fn(|cx| self.lock().poll_swap_outgoing_messages(messages, cx)).await
     }
 }
 
