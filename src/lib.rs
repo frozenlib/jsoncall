@@ -623,7 +623,7 @@ impl RawSession {
         let g = OutgoingRequestGuard::<R>::new(self)?;
         let m = MessageData::from_request(g.id.into(), method, params)?;
         self.lock().outgoing_buffer.push(m);
-        (&g).await
+        g.get_response().await
     }
     fn notification<P>(&self, name: &str, params: Option<&P>) -> Result<()>
     where
@@ -741,16 +741,9 @@ where
         let (id, state) = s.insert_outgoing_request()?;
         Ok(Self { id, state, session })
     }
-}
 
-impl<T> Future for &'_ OutgoingRequestGuard<'_, T>
-where
-    T: DeserializeOwned + Send + Sync + 'static,
-{
-    type Output = Result<T>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.state.lock().unwrap().poll(cx.waker())
+    async fn get_response(&self) -> Result<T> {
+        poll_fn(|cx| self.state.lock().unwrap().poll(cx.waker())).await
     }
 }
 
