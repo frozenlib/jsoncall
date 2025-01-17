@@ -11,14 +11,14 @@ pub enum Error {
     RequestIdOverflow,
     ParamsMissing,
     ParamsParse(Arc<serde_json::Error>),
-    ResultSerialize(Arc<serde_json::Error>),
+    Serialize(Arc<serde_json::Error>),
     Spawn(tokio::task::JoinError),
     Shutdown,
 }
 impl Error {
-    pub fn to_error_object(&self) -> ErrorObject {
+    pub fn into_error_object(self) -> ErrorObject {
         todo!()
     }
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T, E = Error> = std::result::Result<T, E>;

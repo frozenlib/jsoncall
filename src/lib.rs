@@ -74,7 +74,9 @@ impl<'a> RequestContext<'a> {
     where
         T: Serialize,
     {
-        Ok(Response(RawResponse::Ok(to_result(Ok(result))?)))
+        Ok(Response(RawResponse::Data(MessageData::from_success(
+            &self.m.id, result,
+        )?)))
     }
     pub fn spawn(
         self,
@@ -95,16 +97,20 @@ impl<'a> RequestContext<'a> {
 fn to_result(result: Result<impl Serialize>) -> Result<Value> {
     match serde_json::to_value(result?) {
         Ok(value) => Ok(value),
-        Err(e) => Err(Error::ResultSerialize(Arc::new(e))),
+        Err(e) => Err(Error::Serialize(Arc::new(e))),
     }
 }
 
 pub struct NotificationContext<'a> {
-    method: &'a str,
+    m:&'a NotificationMessage,
+    session: &'a Arc<RawSession>,
 }
-impl NotificationContext<'_> {
+impl<'a> NotificationContext<'a> {
+    fn new(m: &'a NotificationMessage, session: &'a Arc<RawSession>) -> Self {
+        Self { m, session }
+    }
+
     fn success(self) -> Result<Response> {
-        todo!()
     }
     fn spawn(self, task: impl Future<Output = ()> + Send + Sync + 'static) -> Result<Response> {
         todo!()
@@ -115,57 +121,66 @@ impl NotificationContext<'_> {
 }
 
 enum RawResponse {
-    Ok(Value),
+    Data(MessageData),
     Spawn(JoinHandle<()>),
 }
 
 pub struct Response(RawResponse);
 
-struct IncomingRequestState2 {
+struct IncomingRequestState {
     is_init_finished: bool,
-    is_cancelled: bool,
-    is_spawned: bool,
-    is_spawn_finished: bool,
-    is_response_sent: bool,
+    is_task_finished: bool,
     task: Option<JoinHandle<()>>,
-}
-
-enum IncomingRequestState {
-    Init,
-    Running(JoinHandle<()>),
-    Cancelled,
-    Finished,
+    is_cancelled: bool,
+    is_response_sent: bool,
 }
 impl IncomingRequestState {
-    #[must_use]
-    fn set_running(&mut self, task: JoinHandle<()>) -> Option<JoinHandle<()>> {
-        match self {
-            Self::Init => {
-                *self = Self::Running(task);
-                None
-            }
-            Self::Running(_) => unreachable!(),
-            Self::Cancelled => Some(task),
-            Self::Finished => None,
+    fn new() -> Self {
+        Self {
+            is_init_finished: false,
+            is_cancelled: false,
+            is_task_finished: false,
+            is_response_sent: false,
+            task: None,
         }
     }
-    #[must_use]
-    fn set_cancel(&mut self) -> Option<JoinHandle<()>> {
-        match mem::replace(self, Self::Cancelled) {
-            Self::Init | Self::Cancelled | Self::Finished => None,
-            Self::Running(task) => {
-                task.abort();
-                Some(task)
+    fn init_finish(&mut self, id: &RequestId, r: Result<Response>, ob: &mut OutgoingBuffer) {
+        self.is_init_finished = true;
+        let md = match r {
+            Ok(r) => match r.0 {
+                RawResponse::Data(data) => Some(Ok(data)),
+                RawResponse::Spawn(task) => {
+                    self.task = Some(task);
+                    None
+                }
+            },
+            Err(e) => Some(Err(e)),
+        };
+        if let Some(md) = md {
+            if !self.is_response_sent {
+                self.is_response_sent = true;
+                ob.push(MessageData::from_result_message_data(id.clone(), md));
             }
         }
     }
-    fn finish(&mut self) {
-        match self {
-            Self::Init | Self::Running(_) => *self = Self::Finished,
-            Self::Cancelled | Self::Finished => {}
+
+    fn can_remove(&self) -> bool {
+        if !self.is_init_finished || !self.is_response_sent {
+            return false;
+        }
+        if self.is_task_finished {
+            return true;
+        }
+        if let Some(task) = &self.task {
+            task.is_finished()
+        } else {
+            true
         }
     }
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct OutgoingRequestId(u128);
 
 enum OutgoingRequestState {
     None,
@@ -267,64 +282,67 @@ impl SessionContext {
     }
 }
 
+struct OutgoingBuffer {
+    messages: VecDeque<MessageData>,
+    waker: Option<Waker>,
+}
+impl OutgoingBuffer {
+    fn new() -> Self {
+        Self {
+            messages: VecDeque::new(),
+            waker: None,
+        }
+    }
+    fn push(&mut self, message: MessageData) {
+        self.messages.push_back(message);
+        if let Some(waker) = self.waker.take() {
+            waker.wake();
+        }
+    }
+}
+
 struct SessionState {
     incoming_requests: HashMap<RequestId, IncomingRequestState>,
-    outgoing_requests: HashMap<u128, Arc<Mutex<OutgoingRequestState>>>,
-    tasks: VecDeque<JoinHandle<()>>,
-    next_outgoing_request_id: u128,
+    outgoing_requests: HashMap<OutgoingRequestId, Arc<Mutex<OutgoingRequestState>>>,
+    outgoing_request_id_next: u128,
+    outgoing_buffer: OutgoingBuffer,
 }
 impl SessionState {
     fn new() -> Self {
         Self {
             incoming_requests: HashMap::new(),
             outgoing_requests: HashMap::new(),
-            tasks: VecDeque::new(),
-            next_outgoing_request_id: 0,
+            outgoing_buffer: OutgoingBuffer::new(),
+            outgoing_request_id_next: 0,
         }
     }
-    fn insert_incoming_request(&mut self, id: &RequestId) -> Result<()> {
-        let state = IncomingRequestState::Init;
+    fn insert_incoming_request(&mut self, id: &RequestId) -> bool {
+        let state = IncomingRequestState::new();
         match self.incoming_requests.entry(id.clone()) {
-            hash_map::Entry::Occupied(_) => Err(Error::RequestIdReused(id.clone())),
+            hash_map::Entry::Occupied(_) => {
+                self.outgoing_buffer.push(MessageData::from_error(
+                    None,
+                    Error::RequestIdReused(id.clone()),
+                ));
+                false
+            }
             hash_map::Entry::Vacant(e) => {
                 e.insert(state);
-                Ok(())
+                true
             }
         }
-    }
-    fn set_incoming_request_task(&mut self, id: &RequestId, task: JoinHandle<()>) {
-        let task = if let Some(state) = self.incoming_requests.get_mut(id) {
-            state.set_running(task)
-        } else {
-            task.abort();
-            Some(task)
-        };
-        if let Some(task) = task {
-            if !task.is_finished() {
-                self.insert_task(task);
-            }
-        }
-
-        let state = self.incoming_requests.get_mut(id).unwrap();
-        *state = IncomingRequestState::Running(task);
     }
 
     fn insert_outgoing_request(&mut self) -> Result<(u128, Arc<Mutex<OutgoingRequestState>>)> {
-        if self.next_outgoing_request_id == u128::MAX {
+        if self.outgoing_request_id_next == u128::MAX {
             return Err(Error::RequestIdOverflow);
         }
-        let id = self.next_outgoing_request_id;
-        self.next_outgoing_request_id += 1;
+        let id = self.outgoing_request_id_next;
+        self.outgoing_request_id_next += 1;
         let state = Arc::new(Mutex::new(OutgoingRequestState::new()));
-        self.outgoing_requests.insert(id, state.clone());
+        self.outgoing_requests
+            .insert(OutgoingRequestId(id), state.clone());
         Ok((id, state))
-    }
-
-    fn insert_task(&mut self, task: JoinHandle<()>) {
-        if self.tasks.capacity() == self.tasks.len() {
-            self.tasks.retain(|h| !h.is_finished());
-        }
-        self.tasks.push_back(task);
     }
 }
 
@@ -344,7 +362,6 @@ where
             self.session.set_io_error(e);
         }
     }
-
     async fn run_raw_1(&mut self, mut reader: impl MessageRead + Send + Sync) -> Result<()> {
         while let Some(b) = reader.read().await? {
             for m in b {
@@ -362,34 +379,50 @@ where
     }
     fn dispatch_message(&mut self, m: Message) -> Result<()> {
         match m.try_into_message_enum()? {
-            MessageEnum::Request(m) => self.on_request(m)?,
+            MessageEnum::Request(m) => self.on_request(m),
             MessageEnum::Success(m) => self.on_response(m.id, Ok(m.result)),
             MessageEnum::Error(m) => self.on_response(m.id, Err(Error::ErrorObject(m.error))),
             MessageEnum::Notification(m) => self.on_notification(m),
         };
         Ok(())
     }
-    fn on_request(&mut self, m: RequestMessage) -> Result<()> {
-        self.session.lock().insert_incoming_request(&m.id)?;
+    fn on_request(&mut self, m: RequestMessage) {
+        if !self.session.lock().insert_incoming_request(&m.id) {
+            return;
+        }
         let cx = RequestContext::new(&m, &self.session);
         let params = Params(&m.params);
-        let res = self.handler.request(&m.method, params, cx)?;
-        match res.0 {
-            RawResponse::Ok(value) => todo!(),
-            RawResponse::Spawn(join_handle) => todo!(),
+        let r = self.handler.request(&m.method, params, cx);
+        let s = &mut *self.session.lock();
+        let ir = s.incoming_requests.get_mut(&m.id).unwrap();
+        ir.init_finish(&m.id, r, &mut s.outgoing_buffer);
+        let can_remove = ir.can_remove();
+        if can_remove {
+            s.incoming_requests.remove(&m.id);
         }
+    }
+    fn on_response(&self, id: RequestId, result: Result<Value>) {
+        let Ok(id) = id.try_into() else {
+            return;
+        };
+        let s = self.session.lock().outgoing_requests.remove(&id);
+        let Some(s) = s else {
+            return;
+        };
+        s.lock().unwrap().set_ready(result);
+    }
 
-        // todo!()
+    fn on_notification(&self, m: NotificationMessage) {
 
+        let cx=NotificationContext::new()
+        let params=Params(&m.params);
+        self.handler.notification(&m.method, params, cx)
+        let cx = SessionContext::new(&self.session);
+        let handler = self.handler.clone();
         let task = spawn(async move {
-            cx.send_response(handler.dyn_request(&m.method, m.params, &cx).await)
-                .await;
+            handler.dyn_notification(&m.method, m.params, &cx).await;
         });
-        let task = state.lock().unwrap().on_spawn(task);
-        if let Some(task) = task {
-            self.session.state.lock().unwrap().insert_task(task);
-        }
-        Ok(())
+        self.session.state.lock().unwrap().insert_task(task);
     }
 }
 
@@ -406,25 +439,6 @@ impl RawSession {
 
     fn set_io_error(self: &Arc<Self>, e: Error) {
         todo!()
-    }
-
-    fn on_notification(&self, m: NotificationMessage) {
-        let cx = SessionContext::new(&self.session);
-        let handler = self.handler.clone();
-        let task = spawn(async move {
-            handler.dyn_notification(&m.method, m.params, &cx).await;
-        });
-        self.session.state.lock().unwrap().insert_task(task);
-    }
-    fn on_response(&self, id: RequestId, result: Result<Value>) {
-        let Ok(id) = id.try_into() else {
-            return;
-        };
-        let state = self.state.lock().unwrap().outgoing_requests.remove(&id);
-        let Some(state) = state else {
-            return;
-        };
-        state.lock().unwrap().set_ready(result);
     }
 
     async fn send_request(

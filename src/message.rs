@@ -1,44 +1,54 @@
+use std::{borrow::Cow, sync::Arc};
+
 use derive_ex::derive_ex;
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::OutgoingRequestId;
+
 use super::{Error, Result};
+
+#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq, Hash)]
+pub struct RequestId(RawRequestId);
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[derive_ex(Eq, PartialEq, Hash)]
-pub enum RequestId {
-    Number(i64),
-    Float(#[eq(key = OrderedFloat($))] f64),
+enum RawRequestId {
+    U128(u128),
+    I128(i128),
+    F64(#[eq(key = OrderedFloat($))] f64),
     String(String),
 }
+
 const MAX_SAFE_INTEGER: u128 = 9007199254740991;
-impl From<u128> for RequestId {
-    fn from(id: u128) -> Self {
-        if id > MAX_SAFE_INTEGER {
-            RequestId::Number(id as i64)
+impl From<OutgoingRequestId> for RequestId {
+    fn from(id: OutgoingRequestId) -> Self {
+        if id.0 < MAX_SAFE_INTEGER {
+            RequestId(RawRequestId::U128(id.0 as u128))
         } else {
-            RequestId::String(id.to_string())
+            RequestId(RawRequestId::String(id.0.to_string()))
         }
     }
 }
-impl TryFrom<RequestId> for u128 {
+impl TryFrom<RequestId> for OutgoingRequestId {
     type Error = Error;
-    fn try_from(id: RequestId) -> Result<u128> {
-        match id {
-            RequestId::Number(n) => {
-                if n >= 0 {
-                    return Ok(n as u128);
+    fn try_from(id: RequestId) -> Result<OutgoingRequestId> {
+        match id.0 {
+            RawRequestId::U128(n) => return Ok(OutgoingRequestId(n)),
+            RawRequestId::I128(n) => {
+                if let Ok(value) = n.try_into() {
+                    return Ok(OutgoingRequestId(value));
                 }
             }
-            RequestId::Float(f) => {
+            RawRequestId::F64(f) => {
                 if f.fract() == 0.0 && 0.0 <= f && f <= MAX_SAFE_INTEGER as f64 {
-                    return Ok(f as u128);
+                    return Ok(OutgoingRequestId(f as u128));
                 }
             }
-            RequestId::String(ref s) => {
+            RawRequestId::String(ref s) => {
                 if let Ok(n) = s.parse() {
-                    return Ok(n);
+                    return Ok(OutgoingRequestId(n));
                 }
             }
         }
@@ -77,6 +87,89 @@ impl Iterator for MessageBatchIter {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub(crate) enum JsonRpcVersion {
+    #[default]
+    #[serde(rename = "2.0")]
+    V2,
+}
+
+#[derive(Debug)]
+pub enum CowEx<'a, T> {
+    Borrowed(&'a T),
+    Owned(T),
+}
+impl<T: Serialize> Serialize for CowEx<'_, T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            CowEx::Borrowed(t) => (*t).serialize(serializer),
+            CowEx::Owned(t) => t.serialize(serializer),
+        }
+    }
+}
+impl<'a, 'de, T: Deserialize<'de>> Deserialize<'de> for CowEx<'a, T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        T::deserialize(deserializer).map(CowEx::Owned)
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[derive_ex(Default, bound())]
+pub(crate) struct RawMessageS<'a, P, R> {
+    pub jsonrpc: JsonRpcVersion,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<RequestId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub method: Option<Cow<'a, str>>,
+    #[serde(skip_serializing_if = "Option::is_none", borrow)]
+    pub params: Option<&'a P>,
+    #[serde(skip_serializing_if = "Option::is_none", borrow)]
+    pub result: Option<&'a R>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<ErrorObject>,
+}
+
+pub(crate) struct MessageData(String);
+
+impl MessageData {
+    pub fn new(data: String) -> Self {
+        Self(data)
+    }
+
+    pub fn from_raw_message<P, R>(msg: &RawMessageS<P, R>) -> Result<Self, serde_json::Error>
+    where
+        P: Serialize,
+        R: Serialize,
+    {
+        serde_json::to_string(msg).map(Self)
+    }
+    pub fn from_success<R>(id: &RequestId, result: &R) -> Result<Self>
+    where
+        R: Serialize,
+    {
+        Self::from_raw_message::<(), R>(&RawMessageS {
+            id: Some(id.clone()),
+            result: Some(result),
+            ..Default::default()
+        })
+        .map_err(|e| Error::Serialize(Arc::new(e)))
+    }
+    pub fn from_error(id: Option<RequestId>, e: Error) -> Self {
+        Self::from_raw_message::<(), ()>(&RawMessageS {
+            id,
+            error: Some(e.into_error_object()),
+            ..Default::default()
+        })
+        .unwrap()
+    }
+    pub fn from_result_message_data(id: RequestId, md: Result<Self>) -> Self {
+        match md {
+            Ok(data) => data,
+            Err(e) => Self::from_error(Some(id), e),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Message {
     pub jsonrpc: String,
@@ -105,18 +198,6 @@ impl Default for Message {
 }
 
 impl Message {
-    pub fn from_result(id: Option<RequestId>, result: Result<Value>) -> Self {
-        let mut m = Self {
-            id,
-            ..Self::default()
-        };
-        match result {
-            Ok(value) => m.result = Some(value),
-            Err(e) => m.error = Some(e.to_error_object()),
-        }
-        m
-    }
-
     pub(super) fn try_into_message_enum(self) -> Result<MessageEnum> {
         if self.jsonrpc != "2.0" {
             return Err(Error::Version(self.jsonrpc));
