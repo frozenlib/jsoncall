@@ -18,6 +18,7 @@ pub enum Error {
     Read(Arc<std::io::Error>),
     ReadEnd,
     Write(Arc<std::io::Error>),
+    WriteEnd,
     Shutdown,
 }
 impl Error {

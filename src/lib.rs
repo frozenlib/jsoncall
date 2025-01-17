@@ -88,9 +88,15 @@ impl<'a> RequestContext<'a> {
         Ok(RawRequestResponse::Spawn(spawn(async move {
             let r = future.await;
             if let Some(s) = s.0.upgrade() {
-                s.lock()
-                    .outgoing_buffer
-                    .push(MessageData::from_result(id, r));
+                let message = MessageData::from_result(id.clone(), r);
+                let s = &mut *s.lock();
+                if s.incoming_requests
+                    .get_mut(&id)
+                    .unwrap()
+                    .task_finish(message, &mut s.outgoing_buffer)
+                {
+                    s.remove_incoming_request(&id);
+                }
             }
         }))
         .into_response())
@@ -169,7 +175,12 @@ impl IncomingRequestState {
             task: None,
         }
     }
-    fn init_finish(&mut self, id: &RequestId, r: Result<Response>, ob: &mut OutgoingBuffer) {
+    fn init_finish(
+        &mut self,
+        id: &RequestId,
+        r: Result<Response>,
+        ob: &mut OutgoingBuffer,
+    ) -> bool {
         assert!(self.is_init_finished);
         self.is_init_finished = true;
         let md = match r {
@@ -189,14 +200,16 @@ impl IncomingRequestState {
                 ob.push(MessageData::from_result_message_data(id.clone(), md));
             }
         }
+        self.can_remove()
     }
-    fn task_finish(&mut self, message: MessageData, ob: &mut OutgoingBuffer) {
+    fn task_finish(&mut self, message: MessageData, ob: &mut OutgoingBuffer) -> bool {
         assert!(!self.is_init_finished);
         self.is_task_finished = true;
         if !self.is_response_sent {
             self.is_response_sent = true;
             ob.push(message);
         }
+        self.can_remove()
     }
 
     fn can_remove(&self) -> bool {
@@ -289,19 +302,11 @@ impl OutgoingBuffer {
     }
     fn push(&mut self, message: MessageData) {
         self.messages.push(message);
+        self.notify();
+    }
+    fn notify(&mut self) {
         if let Some(waker) = self.waker.take() {
             waker.wake();
-        }
-    }
-
-    fn poll_swap(&mut self, messages: &mut Vec<MessageData>, cx: &mut Context) -> Poll<()> {
-        assert!(messages.is_empty());
-        if self.messages.is_empty() {
-            self.waker = Some(cx.waker().clone());
-            Poll::Pending
-        } else {
-            mem::swap(&mut self.messages, messages);
-            Poll::Ready(())
         }
     }
 }
@@ -316,12 +321,6 @@ impl SessionContext {
 }
 
 impl SessionContext {
-    pub fn cancel_request(&self, id: &RequestId) {
-        if let Some(s) = self.0.upgrade() {
-            todo!()
-            //s.cancel_request(id);
-        }
-    }
     pub async fn request<P, R>(&self, method: &str, params: Option<&P>) -> Result<R>
     where
         P: Serialize,
@@ -395,11 +394,12 @@ where
         let params = Params(&m.params);
         let r = self.handler.request(&m.method, params, cx);
         let s = &mut *self.session.lock();
-        let ir = s.incoming_requests.get_mut(&m.id).unwrap();
-        ir.init_finish(&m.id, r, &mut s.outgoing_buffer);
-        let can_remove = ir.can_remove();
-        if can_remove {
-            s.incoming_requests.remove(&m.id);
+        if s.incoming_requests
+            .get_mut(&m.id)
+            .unwrap()
+            .init_finish(&m.id, r, &mut s.outgoing_buffer)
+        {
+            s.remove_incoming_request(&m.id);
         }
     }
     fn on_response(&self, id: RequestId, result: Result<Value>) {
@@ -421,13 +421,13 @@ where
 }
 
 #[derive(Debug)]
-enum ReaderState {
+enum IoTaskState {
     Running,
     End,
     Error(Error),
 }
 
-impl ReaderState {
+impl IoTaskState {
     fn finish(&mut self, r: Result<()>) {
         match r {
             Ok(()) => match self {
@@ -440,13 +440,6 @@ impl ReaderState {
     fn is_running(&self) -> bool {
         matches!(self, Self::Running)
     }
-    fn to_error(&self) -> Option<Error> {
-        match self {
-            Self::Running => None,
-            Self::End => Some(Error::ReadEnd),
-            Self::Error(e) => Some(e.clone()),
-        }
-    }
 }
 
 struct SessionState {
@@ -455,9 +448,9 @@ struct SessionState {
     outgoing_request_id_next: u128,
     outgoing_buffer: OutgoingBuffer,
     read_task: Option<JoinHandle<()>>,
-    read_state: ReaderState,
+    read_state: IoTaskState,
     write_task: Option<JoinHandle<()>>,
-    write_error: Option<Error>,
+    write_state: IoTaskState,
     is_shutdown: bool,
     server_waker: Option<Waker>,
 }
@@ -469,9 +462,9 @@ impl SessionState {
             outgoing_buffer: OutgoingBuffer::new(),
             outgoing_request_id_next: 0,
             read_task: None,
-            read_state: ReaderState::Running,
+            read_state: IoTaskState::Running,
             write_task: None,
-            write_error: None,
+            write_state: IoTaskState::Running,
             is_shutdown: false,
             server_waker: None,
         }
@@ -492,6 +485,12 @@ impl SessionState {
             }
         }
     }
+    fn remove_incoming_request(&mut self, id: &RequestId) {
+        self.incoming_requests.remove(id);
+        if self.can_exit_write_task() {
+            self.outgoing_buffer.notify();
+        }
+    }
 
     fn insert_outgoing_request<T>(
         &mut self,
@@ -509,26 +508,41 @@ impl SessionState {
         Ok((id, state))
     }
 
+    fn can_exit_write_task(&self) -> bool {
+        !self.read_state.is_running() && self.incoming_requests.is_empty()
+    }
+
+    fn poll_swap_outgoing_messages(
+        &mut self,
+        messages: &mut Vec<MessageData>,
+        cx: &mut Context,
+    ) -> Poll<bool> {
+        if self.outgoing_buffer.messages.is_empty() {
+            if self.can_exit_write_task() {
+                return Poll::Ready(false);
+            }
+            self.outgoing_buffer.waker = Some(cx.waker().clone());
+            Poll::Pending
+        } else {
+            mem::swap(messages, &mut self.outgoing_buffer.messages);
+            Poll::Ready(true)
+        }
+    }
+
     fn outgoint_request_error(&self) -> Option<Error> {
         if self.is_shutdown {
             return Some(Error::Shutdown);
         }
-        if let Some(e) = &self.write_error {
+        if let IoTaskState::Error(e) = &self.write_state {
             return Some(e.clone());
         }
-        if let Some(e) = self.read_state.to_error() {
-            return Some(e);
+        if let IoTaskState::Error(e) = &self.read_state {
+            return Some(e.clone());
+        }
+        if let IoTaskState::End = &self.read_state {
+            return Some(Error::ReadEnd);
         }
         None
-    }
-    fn server_result(&self) -> Option<Result<()>> {
-        if self.is_shutdown {
-            Some(Ok(()))
-        } else if let Some(e) = &self.write_error {
-            Some(Err(e.clone()))
-        } else {
-            todo!()
-        }
     }
 
     fn finish_read_state(&mut self, r: Result<()>) {
@@ -536,7 +550,7 @@ impl SessionState {
         self.apply_error();
     }
     fn finish_write_state(&mut self, r: Result<()>) {
-        self.write_error = r.err();
+        self.write_state.finish(r);
         self.apply_error();
     }
 
@@ -544,11 +558,6 @@ impl SessionState {
         if let Some(e) = self.outgoint_request_error() {
             for r in self.outgoing_requests.values() {
                 r.set_ready(Err(e.clone()));
-            }
-        }
-        if self.server_result().is_some() {
-            if let Some(waker) = self.server_waker.take() {
-                waker.wake();
             }
         }
     }
@@ -607,19 +616,19 @@ impl RawSession {
         }
     }
 
-    async fn read_ongoing_messages(self: &Arc<Self>, messages: &mut Vec<MessageData>) {
+    async fn read_ongoing_messages(self: &Arc<Self>, messages: &mut Vec<MessageData>) -> bool {
         struct OutgointBufferSwapper<'a> {
             session: &'a Arc<RawSession>,
             messages: &'a mut Vec<MessageData>,
         }
         impl Future for OutgointBufferSwapper<'_> {
-            type Output = ();
+            type Output = bool;
             fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+                assert!(self.messages.is_empty());
                 let this = self.get_mut();
                 this.session
                     .lock()
-                    .outgoing_buffer
-                    .poll_swap(this.messages, cx)
+                    .poll_swap_outgoing_messages(this.messages, cx)
             }
         }
         OutgointBufferSwapper {
