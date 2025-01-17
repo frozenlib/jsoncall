@@ -455,19 +455,6 @@ impl Session {
         let session = RawSession::new();
         let task_read = spawn(MessageDispatcher::run(session.clone(), handler, reader));
 
-        // let handle=spawn({
-        //     let session=session.clone();
-        //     async {
-
-        // }})
-
-        // Self {
-        //     handler: Arc::new(handler),
-        //     session: Arc::new(RawSession {
-        //         writer: Arc::new(tokio::sync::Mutex::new(writer.boxed())),
-        //         state: Arc::new(Mutex::new(SessionState::new())),
-        //     }),
-        // }
         todo!()
     }
     pub fn context(self: Arc<Self>) -> SessionContext {
@@ -478,12 +465,12 @@ impl Session {
     }
 }
 
-struct OutgoingRequestStateGuard {
+struct OutgoingRequestGuard {
     id: OutgoingRequestId,
     state: Arc<Mutex<OutgoingRequestState>>,
     session: Arc<Mutex<SessionState>>,
 }
-impl OutgoingRequestStateGuard {
+impl OutgoingRequestGuard {
     fn new(session: &Arc<Mutex<SessionState>>) -> Result<Self> {
         let (id, state) = session.lock().unwrap().insert_outgoing_request()?;
         Ok(Self {
@@ -494,7 +481,7 @@ impl OutgoingRequestStateGuard {
     }
 }
 
-impl Future for &'_ OutgoingRequestStateGuard {
+impl Future for &'_ OutgoingRequestGuard {
     type Output = Result<Value>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -502,7 +489,7 @@ impl Future for &'_ OutgoingRequestStateGuard {
     }
 }
 
-impl Drop for OutgoingRequestStateGuard {
+impl Drop for OutgoingRequestGuard {
     fn drop(&mut self) {
         // todo cancellation request
         self.session
