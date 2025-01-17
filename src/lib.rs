@@ -161,7 +161,7 @@ pub struct Response(RawResponse);
 struct IncomingRequestState {
     is_init_finished: bool,
     is_task_finished: bool,
-    task: Option<JoinHandle<()>>,
+    task: TaskHandle,
     is_cancelled: bool,
     is_response_sent: bool,
 }
@@ -172,7 +172,7 @@ impl IncomingRequestState {
             is_cancelled: false,
             is_task_finished: false,
             is_response_sent: false,
-            task: None,
+            task: TaskHandle::new(),
         }
     }
     fn init_finish(
@@ -187,7 +187,7 @@ impl IncomingRequestState {
             Ok(r) => match r.0 {
                 RawResponse::Request(RawRequestResponse::Success(data)) => Some(Ok(data)),
                 RawResponse::Request(RawRequestResponse::Spawn(task)) => {
-                    self.task = Some(task);
+                    self.task.set_task(task);
                     None
                 }
                 RawResponse::Notification(_) => unreachable!(),
@@ -208,6 +208,20 @@ impl IncomingRequestState {
         if !self.is_response_sent {
             self.is_response_sent = true;
             ob.push(message);
+        }
+        self.can_remove()
+    }
+    fn cancel(&mut self, id: &RequestId, response: Option<Error>, ob: &mut OutgoingBuffer) -> bool {
+        if self.is_cancelled {
+            return false;
+        }
+        self.is_cancelled = true;
+        self.task.abort();
+        if !self.is_response_sent {
+            self.is_response_sent = true;
+            if let Some(e) = response {
+                ob.push(MessageData::from_error(Some(id.clone()), e));
+            }
         }
         self.can_remove()
     }
@@ -442,14 +456,40 @@ impl IoTaskState {
     }
 }
 
+struct TaskHandle {
+    task: Option<JoinHandle<()>>,
+    is_abort: bool,
+}
+impl TaskHandle {
+    fn new() -> Self {
+        Self {
+            task: None,
+            is_abort: false,
+        }
+    }
+    fn set_task(&mut self, task: JoinHandle<()>) {
+        if self.is_abort {
+            task.abort();
+        } else {
+            self.task = Some(task);
+        }
+    }
+    fn abort(&mut self) {
+        self.is_abort = true;
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
+}
+
 struct SessionState {
     incoming_requests: HashMap<RequestId, IncomingRequestState>,
     outgoing_requests: HashMap<OutgoingRequestId, Arc<dyn OutgoingRequest>>,
     outgoing_request_id_next: u128,
     outgoing_buffer: OutgoingBuffer,
-    read_task: Option<JoinHandle<()>>,
+    read_task: TaskHandle,
     read_state: IoTaskState,
-    write_task: Option<JoinHandle<()>>,
+    write_task: TaskHandle,
     write_state: IoTaskState,
     is_shutdown: bool,
     server_waker: Option<Waker>,
@@ -461,13 +501,24 @@ impl SessionState {
             outgoing_requests: HashMap::new(),
             outgoing_buffer: OutgoingBuffer::new(),
             outgoing_request_id_next: 0,
-            read_task: None,
+            read_task: TaskHandle::new(),
             read_state: IoTaskState::Running,
-            write_task: None,
+            write_task: TaskHandle::new(),
             write_state: IoTaskState::Running,
             is_shutdown: false,
             server_waker: None,
         }
+    }
+    fn shutdown(&mut self) {
+        if self.is_shutdown {
+            return;
+        }
+        self.is_shutdown = true;
+        self.read_task.abort();
+        self.finish_read_state(Ok(()));
+        // - [ ] 各メソッドハンドラをキャンセルする
+        // - [ ] メソッドハンドラのキャンセル完了を待機する
+        // - [ ] キャンセル完了とデータ送信が完了したら、サーバ待機タスクを正常終了する
     }
     fn insert_incoming_request(&mut self, id: &RequestId) -> bool {
         let state = IncomingRequestState::new();
@@ -591,6 +642,13 @@ impl RawSession {
         self.lock().outgoing_buffer.push(m);
         Ok(())
     }
+    fn cancel_incoming_request(&self, id: &RequestId, response: Option<Error>) {
+        let s = &mut self.lock();
+        let Some(ir) = s.incoming_requests.get(id) else {
+            return;
+        };
+        ir.task_finish(message, ob)
+    }
 
     async fn run_write_task(self: Arc<Self>, writer: impl AsyncWrite + Send + Sync + 'static) {
         let e = self
@@ -651,8 +709,8 @@ impl Session {
         let read_task = spawn(MessageDispatcher::run(session.clone(), handler, reader));
         let write_task = spawn(session.clone().run_write_task(writer));
         let mut s = session.lock();
-        s.read_task = Some(read_task);
-        s.write_task = Some(write_task);
+        s.read_task.set_task(read_task);
+        s.write_task.set_task(write_task);
         drop(s);
         Self(session)
     }
@@ -673,8 +731,8 @@ impl Session {
     pub fn context(self: Arc<Self>) -> SessionContext {
         SessionContext::new(&self.0)
     }
-    pub async fn shutdown(&self) -> Result<()> {
-        todo!()
+    pub fn shutdown(&self) {
+        self.0.lock().shutdown();
     }
 }
 
