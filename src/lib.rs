@@ -289,23 +289,18 @@ where
 
 struct OutgoingBuffer {
     messages: Vec<MessageData>,
-    waker: Option<Waker>,
+    waker: WakerStore,
 }
 impl OutgoingBuffer {
     fn new() -> Self {
         Self {
             messages: Vec::new(),
-            waker: None,
+            waker: WakerStore::new(),
         }
     }
     fn push(&mut self, message: MessageData) {
         self.messages.push(message);
-        self.notify();
-    }
-    fn notify(&mut self) {
-        if let Some(waker) = self.waker.take() {
-            waker.wake();
-        }
+        self.waker.wake();
     }
 }
 
@@ -530,7 +525,7 @@ impl SessionState {
     fn remove_incoming_request(&mut self, id: &RequestId) {
         self.incoming_requests.remove(id);
         if self.can_exit_write_task() {
-            self.outgoing_buffer.notify();
+            self.outgoing_buffer.waker.wake();
         }
     }
 
@@ -563,8 +558,7 @@ impl SessionState {
             if self.can_exit_write_task() {
                 return Poll::Ready(false);
             }
-            self.outgoing_buffer.waker = Some(cx.waker().clone());
-            Poll::Pending
+            self.outgoing_buffer.waker.poll(cx)
         } else {
             mem::swap(messages, &mut self.outgoing_buffer.messages);
             Poll::Ready(true)
