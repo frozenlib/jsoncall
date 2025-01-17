@@ -32,11 +32,13 @@ pub trait Handler {
     ) -> Result<Response>;
 }
 
+pub const NO_PARAMS: Option<()> = None;
+
 #[derive(Clone, Copy, Debug)]
 pub struct Params<'a>(&'a Option<Map<String, Value>>);
 
-impl<'a> Params<'a> {
-    fn to<'b, T>(&'b self) -> Result<T>
+impl Params<'_> {
+    pub fn to<'b, T>(&'b self) -> Result<T>
     where
         T: Deserialize<'b>,
     {
@@ -46,7 +48,7 @@ impl<'a> Params<'a> {
             Err(Error::ParamsMissing)
         }
     }
-    fn to_opt<'b, T>(&'b self) -> Result<Option<T>>
+    pub fn to_opt<'b, T>(&'b self) -> Result<Option<T>>
     where
         T: Deserialize<'b>,
     {
@@ -309,21 +311,23 @@ impl SessionContext {
             //s.cancel_request(id);
         }
     }
-    pub async fn notification(&self, name: &str, params: Option<Map<String, Value>>) -> Result<()> {
+    pub async fn request<P, R>(&self, method: &str, params: Option<&P>) -> Result<R>
+    where
+        P: Serialize,
+        R: DeserializeOwned + Send + Sync + 'static,
+    {
         if let Some(s) = self.0.upgrade() {
-            todo!()
-            // s.send_notification(name, params).await
+            s.request(method, params).await
         } else {
             Err(Error::Shutdown)
         }
     }
-    pub async fn request<P, R>(&self, method: &str, params: Option<&P>) -> Result<R>
+    pub fn notification<P>(&self, name: &str, params: Option<&P>) -> Result<()>
     where
         P: Serialize,
-        R: DeserializeOwned,
     {
         if let Some(s) = self.0.upgrade() {
-            s.request(method, params).await
+            s.notification(name, params)
         } else {
             Err(Error::Shutdown)
         }
@@ -470,13 +474,20 @@ impl RawSession {
     async fn request<P, R>(&self, method: &str, params: Option<&P>) -> Result<R>
     where
         P: Serialize,
-        R: DeserializeOwned,
+        R: DeserializeOwned + Send + Sync + 'static,
     {
-        let g = OutgoingRequestGuard::new(self)?;
+        let g = OutgoingRequestGuard::<R>::new(self)?;
         let m = MessageData::from_request(g.id.into(), method, params)?;
         self.lock().outgoing_buffer.push(m);
-
-        todo!()
+        (&g).await
+    }
+    fn notification<P>(&self, name: &str, params: Option<&P>) -> Result<()>
+    where
+        P: Serialize,
+    {
+        let m = MessageData::from_notification(name, params)?;
+        self.lock().outgoing_buffer.push(m);
+        Ok(())
     }
 }
 
@@ -493,6 +504,20 @@ impl Session {
 
         todo!()
     }
+    pub async fn request<P, R>(&self, method: &str, params: Option<&P>) -> Result<R>
+    where
+        P: Serialize,
+        R: DeserializeOwned + Send + Sync + 'static,
+    {
+        self.0.request(method, params).await
+    }
+    pub fn notification<P>(&self, name: &str, params: Option<&P>) -> Result<()>
+    where
+        P: Serialize,
+    {
+        self.0.notification(name, params)
+    }
+
     pub fn context(self: Arc<Self>) -> SessionContext {
         SessionContext::new(&self.0)
     }
