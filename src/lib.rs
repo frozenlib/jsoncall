@@ -159,14 +159,12 @@ struct IncomingRequestState {
     is_init_finished: bool,
     is_task_finished: bool,
     task: TaskHandle,
-    is_cancelled: bool,
     is_response_sent: bool,
 }
 impl IncomingRequestState {
     fn new() -> Self {
         Self {
             is_init_finished: false,
-            is_cancelled: false,
             is_task_finished: false,
             is_response_sent: false,
             task: TaskHandle::new(),
@@ -217,10 +215,6 @@ impl IncomingRequestState {
         aborts: &mut AbortingHandles,
         ob: &mut OutgoingBuffer,
     ) {
-        if self.is_cancelled {
-            return;
-        }
-        self.is_cancelled = true;
         self.task.abort(aborts);
         if !self.is_response_sent {
             self.is_response_sent = true;
