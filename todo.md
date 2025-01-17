@@ -1,8 +1,6 @@
 # todo
 
-is_canceled を TaskHandle.is_abort と統合
-
-shutdown にはキャンセル処理が含まれるため、キャンセルの実装が必要
+サーバ wait の実装
 OutgoingBuffer がデータ追加を必要に応じて無視するようにする
 
 - セッション初期化メインループ
