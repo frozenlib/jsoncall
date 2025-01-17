@@ -611,13 +611,14 @@ impl RawSession {
             session: &'a Arc<RawSession>,
             messages: &'a mut Vec<MessageData>,
         }
-        impl<'a> Future for OutgointBufferSwapper<'a> {
+        impl Future for OutgointBufferSwapper<'_> {
             type Output = ();
-
             fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
                 let this = self.get_mut();
-                let mut s = this.session.lock();
-                s.outgoing_buffer.poll_swap(&mut this.messages, cx)
+                this.session
+                    .lock()
+                    .outgoing_buffer
+                    .poll_swap(this.messages, cx)
             }
         }
         OutgointBufferSwapper {
@@ -665,10 +666,11 @@ impl Session {
     pub async fn shutdown(&self) -> Result<()> {
         todo!()
     }
+}
 
-    fn swap_outgoing_buffer(&self, buffer: &mut Vec<MessageData>) {
-        let mut s = self.0.lock();
-        mem::swap(&mut s.outgoing_buffer.messages, buffer);
+impl Drop for Session {
+    fn drop(&mut self) {
+        todo!()
     }
 }
 
