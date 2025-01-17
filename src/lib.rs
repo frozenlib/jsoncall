@@ -778,3 +778,29 @@ impl<T> Drop for OutgoingRequestGuard<'_, T> {
         self.session.lock().outgoing_requests.remove(&self.id);
     }
 }
+
+struct AbortingHandles(Vec<JoinHandle<()>>);
+
+impl AbortingHandles {
+    fn new() -> Self {
+        Self(Vec::new())
+    }
+    fn push(&mut self, task: JoinHandle<()>) {
+        let old_capacity = self.0.capacity();
+        if old_capacity == self.0.len() {
+            self.0.retain(|t| !t.is_finished());
+            if self.0.len() >= old_capacity / 2 {
+                self.0.reserve(old_capacity * 2 - self.0.len());
+            }
+        }
+        self.0.push(task);
+    }
+    fn pop(&mut self) -> Option<JoinHandle<()>> {
+        loop {
+            let task = self.0.pop()?;
+            if !task.is_finished() {
+                return Some(task);
+            }
+        }
+    }
+}
