@@ -289,13 +289,13 @@ where
 
 struct OutgoingBuffer {
     messages: Vec<MessageData>,
-    waker: WakerStore,
+    waker: WakeNotifier,
 }
 impl OutgoingBuffer {
     fn new() -> Self {
         Self {
             messages: Vec::new(),
-            waker: WakerStore::new(),
+            waker: WakeNotifier::new(),
         }
     }
     fn push(&mut self, message: MessageData) {
@@ -558,7 +558,7 @@ impl SessionState {
             if self.can_exit_write_task() {
                 return Poll::Ready(false);
             }
-            self.outgoing_buffer.waker.poll(cx)
+            self.outgoing_buffer.waker.set_waker(cx)
         } else {
             mem::swap(messages, &mut self.outgoing_buffer.messages);
             Poll::Ready(true)
@@ -779,13 +779,13 @@ impl AbortingHandles {
     }
 }
 
-struct WakerStore(Option<Waker>);
+struct WakeNotifier(Option<Waker>);
 
-impl WakerStore {
+impl WakeNotifier {
     fn new() -> Self {
         Self(None)
     }
-    fn poll<T>(&mut self, cx: &mut Context) -> Poll<T> {
+    fn set_waker<T>(&mut self, cx: &mut Context) -> Poll<T> {
         self.0 = Some(cx.waker().clone());
         Poll::Pending
     }
