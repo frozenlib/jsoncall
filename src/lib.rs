@@ -376,13 +376,11 @@ where
         let mut s = String::new();
         loop {
             s.clear();
-            println!("read_line");
             let len = reader
                 .read_line(&mut s)
                 .await
                 .map_err(|e| Error::Read(Arc::new(e)))?;
             if len == 0 {
-                println!("read_line ret 0");
                 break;
             }
             let b: RawMessageBatch =
@@ -501,7 +499,6 @@ impl TaskHandle {
     fn abort(&mut self, aborts: &mut AbortingHandles) {
         self.is_abort = true;
         if let Some(task) = self.task.take() {
-            println!("abort");
             aborts.push(task);
         }
     }
@@ -545,7 +542,6 @@ impl SessionState {
             return;
         }
         self.is_shutdown = true;
-        println!("[{}]: state.shutdown", self.session_id);
         self.finish_read_state(Ok(()));
         self.finish_write_state(Ok(()));
         self.read_task.abort(&mut self.aborts);
@@ -594,7 +590,6 @@ impl SessionState {
     }
 
     fn can_exit_write_task(&self) -> bool {
-        println!("[{}]: can_exit_write_task", self.session_id);
         !self.read_state.is_running() && self.incoming_requests.is_empty()
     }
 
@@ -614,9 +609,6 @@ impl SessionState {
         }
     }
     fn poll_wait_server(&mut self, cx: &mut Context) -> Poll<()> {
-        println!("[{}]: poll_wait_server", self.session_id);
-        dbg!(&self.read_state);
-        dbg!(&self.write_state);
         if self.read_state.is_running() || self.write_state.is_running() {
             self.server_waker.set(cx)
         } else {
@@ -648,15 +640,12 @@ impl SessionState {
     }
 
     fn finish_read_state(&mut self, r: Result<()>) {
-        println!("[{}]: finish_read_state", self.session_id);
         self.read_state.finish(r);
-        dbg!(&self.read_state);
         self.apply_error();
         self.server_waker.wake();
         self.outgoing_buffer.waker.wake();
     }
     fn finish_write_state(&mut self, r: Result<()>) {
-        println!("[{}]: finish_write_state", self.session_id);
         self.write_state.finish(r);
         self.apply_error();
         self.server_waker.wake();
@@ -813,18 +802,11 @@ impl Session {
         SessionContext::new(&self.0)
     }
     pub fn shutdown(&self) {
-        println!("session::shutdown");
         self.0.lock().shutdown();
     }
     pub async fn wait(&self) -> Result<()> {
-        println!("wait");
-        poll_fn(|cx| {
-            println!("wait_poll_fn");
-            self.0.lock().poll_wait_server(cx)
-        })
-        .await;
+        poll_fn(|cx| self.0.lock().poll_wait_server(cx)).await;
 
-        println!("aborts loop");
         loop {
             let task = self.0.lock().aborts.pop();
             if let Some(task) = task {
@@ -911,14 +893,11 @@ impl WakerStore {
         Self(None)
     }
     fn set<T>(&mut self, cx: &mut Context) -> Poll<T> {
-        println!("set_waker");
         self.0 = Some(cx.waker().clone());
         Poll::Pending
     }
     fn wake(&mut self) {
-        println!("wake");
         if let Some(waker) = self.0.take() {
-            println!("wake waker");
             waker.wake();
         }
     }
