@@ -2,6 +2,7 @@ use std::{borrow::Cow, sync::Arc};
 
 use derive_ex::derive_ex;
 use ordered_float::OrderedFloat;
+use parse_display::Display;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, value::RawValue, Map, Value};
 
@@ -9,15 +10,17 @@ use crate::OutgoingRequestId;
 
 use super::{Error, Result};
 
-#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq, Hash, Display)]
 pub struct RequestId(RawRequestId);
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Display)]
 #[derive_ex(Eq, PartialEq, Hash)]
+#[display("{0}")]
 enum RawRequestId {
     U128(u128),
     I128(i128),
     F64(#[eq(key = OrderedFloat($))] f64),
+    #[display("\"{0}\"")]
     String(String),
 }
 
@@ -353,7 +356,8 @@ impl From<Message> for MessageBatch {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Display)]
+#[display("[{code}] {message}")]
 pub struct ErrorObject {
     pub code: i64,
     pub message: String,

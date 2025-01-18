@@ -26,14 +26,21 @@ pub use message_read::*;
 pub use message_write::*;
 
 pub trait Handler {
-    fn request(&mut self, method: &str, params: Params, cx: RequestContext) -> Result<Response>;
+    #[allow(unused_variables)]
+    fn request(&mut self, method: &str, params: Params, cx: RequestContext) -> Result<Response> {
+        Err(Error::MethodNotFound)
+    }
+    #[allow(unused_variables)]
     fn notification(
         &mut self,
         method: &str,
         params: Params,
         cx: NotificationContext,
-    ) -> Result<Response>;
+    ) -> Result<Response> {
+        Err(Error::MethodNotFound)
+    }
 }
+impl Handler for () {}
 
 pub const NO_PARAMS: Option<()> = None;
 

@@ -1,27 +1,47 @@
 use std::sync::Arc;
 
+use parse_display::Display;
+
 use crate::error_codes;
 
 use super::{ErrorObject, RequestId};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, thiserror::Error, Display)]
 pub enum Error {
+    #[display("Result: {0}")]
     Result(ErrorObject),
+    #[display("Unsupported JSON-RPC version")]
     Version,
+    #[display("Invalid JSON-RPC message")]
     Message,
+    #[display("Request ID reused: {0}")]
     RequestIdReused(RequestId),
+    #[display("Request ID not found")]
     RequestIdNotFound,
+    #[display("Request ID overflow")]
     RequestIdOverflow,
+    #[display("`params` is required but missing")]
     ParamsMissing,
+    #[display("Serialize failed: {0}")]
     Serialize(Arc<serde_json::Error>),
+    #[display("Deserialize JSON failed: {0}")]
     DeserializeJson(Arc<serde_json::Error>),
+    #[display("Deserialize params failed: {0}")]
     DeserializeParams(Arc<serde_json::Error>),
+    #[display("Deserialize reseponse failed: {0}")]
     DeserializeResponse(Arc<serde_json::Error>),
+    #[display("Read error: {0}")]
     Read(Arc<std::io::Error>),
+    #[display("Read end")]
     ReadEnd,
+    #[display("Write error: {0}")]
     Write(Arc<std::io::Error>),
+    #[display("Write end")]
     WriteEnd,
+    #[display("Shutdown")]
     Shutdown,
+    #[display("Method not found")]
+    MethodNotFound,
 }
 
 impl Error {
@@ -76,6 +96,9 @@ impl Error {
             }
             Error::WriteEnd => ErrorObject::new(error_codes::INTERNAL_ERROR, "Write end"),
             Error::Shutdown => ErrorObject::new(error_codes::INTERNAL_ERROR, "Shutdown"),
+            Error::MethodNotFound => {
+                ErrorObject::new(error_codes::METHOD_NOT_FOUND, "Method not found")
+            }
         }
     }
 }
