@@ -24,3 +24,4 @@ parse-display = "0.10.0"
 
 [dev-dependencies]
 anyhow = "1.0.95"
+assert-call = "0.1.1"
