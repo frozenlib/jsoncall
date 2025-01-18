@@ -8,7 +8,7 @@ use serde_json::{json, value::RawValue, Value};
 #[test]
 fn raw_message_deserialize_request() -> anyhow::Result<()> {
     let input = r#"{"jsonrpc":"2.0","id":1,"method":"test_method","params":{"param1":"value1"}}"#;
-    let m = serde_json::from_str::<RawMessage>(input).unwrap();
+    let m = serde_json::from_str::<RawMessage>(input)?;
     assert_eq!(m.jsonrpc, "2.0");
     assert_eq!(m.id, Some(1.into()));
     assert_eq!(m.method, Some("test_method".into()));
@@ -19,7 +19,7 @@ fn raw_message_deserialize_request() -> anyhow::Result<()> {
 #[test]
 fn raw_message_deserialize_request_no_params() -> anyhow::Result<()> {
     let input = r#"{"jsonrpc":"2.0","id":1,"method":"test_method"}"#;
-    let m = serde_json::from_str::<RawMessage>(input).unwrap();
+    let m = serde_json::from_str::<RawMessage>(input)?;
     assert_eq!(m.jsonrpc, "2.0");
     assert_eq!(m.id, Some(1.into()));
     assert_eq!(m.method, Some("test_method".into()));
@@ -30,7 +30,7 @@ fn raw_message_deserialize_request_no_params() -> anyhow::Result<()> {
 #[test]
 fn raw_message_deserialize_result() -> anyhow::Result<()> {
     let input = r#"{"jsonrpc":"2.0","id":1,"result":{"result1":"value1"}}"#;
-    let m = serde_json::from_str::<RawMessage>(input).unwrap();
+    let m = serde_json::from_str::<RawMessage>(input)?;
     assert_eq!(m.jsonrpc, "2.0");
     assert_eq!(m.id, Some(1.into()));
     assert_eq!(to_value(m.result)?, json!({"result1": "value1"}));
@@ -40,7 +40,7 @@ fn raw_message_deserialize_result() -> anyhow::Result<()> {
 #[test]
 fn raw_message_deserialize_error() -> anyhow::Result<()> {
     let input = r#"{"jsonrpc":"2.0","id":1,"error":{"code":1,"message":"error message"}}"#;
-    let m = serde_json::from_str::<RawMessage>(input).unwrap();
+    let m = serde_json::from_str::<RawMessage>(input)?;
     assert_eq!(m.jsonrpc, "2.0");
     assert_eq!(m.id, Some(1.into()));
     assert_eq!(to_value(m.result)?, Value::Null);
