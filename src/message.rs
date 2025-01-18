@@ -174,6 +174,7 @@ impl<'a> RawMessage<'a> {
         }
     }
     pub fn into_varients(self) -> Result<RawMessageVariants<'a>> {
+        self.verify_version()?;
         match self {
             RawMessage {
                 id: Some(id),

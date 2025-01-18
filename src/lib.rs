@@ -376,9 +376,9 @@ where
                 self.on_message_one(m).await;
             }
         }
-        todo!()
+        Ok(())
     }
-    async fn on_message_one<'a>(&mut self, m: RawMessage<'a>) {
+    async fn on_message_one(&mut self, m: RawMessage<'_>) {
         let id = m.id.clone();
         match self.dispatch_message(m) {
             Ok(()) => {}
