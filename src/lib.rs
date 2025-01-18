@@ -392,11 +392,14 @@ where
                 println!("[{id}]: end_of_file");
                 break;
             }
-            let b: RawMessageBatch =
+            // let b: RawMessageBatch =
+            //     serde_json::from_str(&s).map_err(|e| Error::DeserializeJson(Arc::new(e)))?;
+            // for m in b {
+            //     self.on_message_one(m).await;
+            // }
+            let m: RawMessage =
                 serde_json::from_str(&s).map_err(|e| Error::DeserializeJson(Arc::new(e)))?;
-            for m in b {
-                self.on_message_one(m).await;
-            }
+            self.on_message_one(m).await;
         }
         Ok(())
     }

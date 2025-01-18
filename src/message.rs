@@ -116,17 +116,10 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for CowEx<'_, T> {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(untagged)]
 pub enum RawMessageBatch<'a> {
     Single(#[serde(borrow)] RawMessage<'a>),
     Batch(Vec<RawMessage<'a>>),
-}
-impl<'a> RawMessageBatch<'a> {
-    pub fn as_slice(&self) -> &[RawMessage<'a>] {
-        match self {
-            RawMessageBatch::Single(msg) => std::slice::from_ref(msg),
-            RawMessageBatch::Batch(vec) => vec,
-        }
-    }
 }
 impl<'a> IntoIterator for RawMessageBatch<'a> {
     type Item = RawMessage<'a>;
@@ -155,15 +148,14 @@ impl<'a> Iterator for RawMessageBatchIter<'a> {
 
 #[derive(Debug, Deserialize)]
 pub struct RawMessage<'a> {
-    #[serde(borrow)]
     pub jsonrpc: Cow<'a, str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<RequestId>,
-    #[serde(skip_serializing_if = "Option::is_none", borrow)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub method: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none", borrow)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub params: Option<&'a RawValue>,
-    #[serde(skip_serializing_if = "Option::is_none", borrow)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<&'a RawValue>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ErrorObject>,
