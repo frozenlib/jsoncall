@@ -376,6 +376,8 @@ where
     async fn run_raw(&mut self, mut reader: impl AsyncBufRead + Send + Sync) -> Result<()> {
         let mut reader = pin!(reader);
         let mut s = String::new();
+
+        let id = self.session.lock().session_id;
         loop {
             s.clear();
             let len = reader
@@ -383,6 +385,7 @@ where
                 .await
                 .map_err(|e| Error::Read(Arc::new(e)))?;
             if len == 0 {
+                println!("[{id}]: end_of_file");
                 break;
             }
             let b: RawMessageBatch =

@@ -1,12 +1,11 @@
 use jsoncall::{Handler, Params, RequestContext, Session};
 use serde::{Deserialize, Serialize};
-use tokio::spawn;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let (server, client) = Session::channel((), ());
-    let server = spawn(async move { server.wait().await });
+    let (server, client) = Session::channel(HelloService, ());
 
+    println!("requste start");
     let response: HelloResponse = client
         .request(
             "hello",
@@ -15,8 +14,9 @@ async fn main() -> anyhow::Result<()> {
             }),
         )
         .await?;
+    println!("requste finished");
     assert_eq!(response.message, "Hello, Alice!");
-    server.await??;
+    server.wait().await?;
     Ok(())
 }
 
