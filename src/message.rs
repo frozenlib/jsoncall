@@ -169,6 +169,7 @@ impl<'a> RawMessage<'a> {
         }
     }
     pub(crate) fn into_varients(self) -> Result<RawMessageVariants<'a>> {
+        self.verify_version()?;
         match self {
             RawMessage {
                 id: Some(id),
@@ -231,7 +232,7 @@ pub(crate) enum RawMessageVariants<'a> {
 #[derive_ex(Default, bound())]
 pub(crate) struct RawMessageS<'a, P, R> {
     #[serde(borrow)]
-    // #[default(Cow::Borrowed("2.0"))]
+    #[default(Cow::Borrowed("2.0"))]
     pub jsonrpc: Cow<'a, str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<RequestId>,
