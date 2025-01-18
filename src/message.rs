@@ -135,6 +135,79 @@ pub struct RawMessage<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ErrorObject>,
 }
+impl RawMessage<'_> {
+    pub(crate) fn verify_version(&self) -> Result<()> {
+        if self.jsonrpc == "2.0" {
+            Ok(())
+        } else {
+            Err(Error::Version)
+        }
+    }
+    pub fn to_varients(&self) -> RawMessageVariants {
+        match self {
+            RawMessage {
+                id: Some(id),
+                method: Some(method),
+                params,
+                result: None,
+                error: None,
+                ..
+            } => RawMessageVariants::Request {
+                id,
+                method,
+                params: *params,
+            },
+            RawMessage {
+                id: Some(id),
+                method: None,
+                params: None,
+                result: Some(result),
+                error: None,
+                ..
+            } => RawMessageVariants::Success { id, result },
+            RawMessage {
+                id,
+                method: None,
+                params: None,
+                result: None,
+                error: Some(error),
+                ..
+            } => RawMessageVariants::Error { id, error },
+            RawMessage {
+                id: None,
+                method: Some(method),
+                params,
+                result: None,
+                error: None,
+                ..
+            } => RawMessageVariants::Notification {
+                method,
+                params: *params,
+            },
+            _ => unreachable!(),
+        }
+    }
+}
+
+pub(crate) enum RawMessageVariants<'a> {
+    Request {
+        id: &'a RequestId,
+        method: &'a str,
+        params: Option<&'a RawValue>,
+    },
+    Success {
+        id: &'a RequestId,
+        result: &'a RawValue,
+    },
+    Error {
+        id: &'a Option<RequestId>,
+        error: &'a ErrorObject,
+    },
+    Notification {
+        method: &'a str,
+        params: Option<&'a RawValue>,
+    },
+}
 
 #[derive(Debug, Serialize)]
 #[derive_ex(Default, bound())]
@@ -253,7 +326,7 @@ impl Default for Message {
 impl Message {
     pub(super) fn try_into_message_enum(self) -> Result<MessageEnum> {
         if self.jsonrpc != "2.0" {
-            return Err(Error::Version(self.jsonrpc));
+            return Err(Error::Version);
         }
         match (self.id, self.method, self.result, self.error) {
             (Some(id), Some(method), None, None) => Ok(MessageEnum::Request(RequestMessage {

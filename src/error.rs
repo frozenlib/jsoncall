@@ -7,7 +7,7 @@ use super::{ErrorObject, RequestId};
 #[derive(Debug, Clone)]
 pub enum Error {
     Result(ErrorObject),
-    Version(String),
+    Version,
     Message,
     RequestIdReused(RequestId),
     RequestIdNotFound(RequestId),
@@ -33,7 +33,7 @@ impl Error {
                 message: e.message,
                 data: e.data,
             },
-            Error::Version(_) => {
+            Error::Version => {
                 ErrorObject::new(error_codes::INVALID_REQUEST, "Unsupported JSON-RPC version")
             }
             Error::Message => {
