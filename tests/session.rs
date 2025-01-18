@@ -68,11 +68,4 @@ async fn client_to_server_request() -> Result<()> {
 
     Ok(())
 
-    // let request = server.next_request().await?;
-    // assert_eq!(request.method(), "test");
-    // assert_eq!(request.params(), Some(&[1, 2, 3]));
-    // request.respond(&[4, 5, 6])?;
-    // let response = client.request("test", &[1, 2, 3]).await?;
-    // assert_eq!(response, Some(vec![4, 5, 6]));
-    // Ok(())
 }
