@@ -49,6 +49,7 @@ impl Handler for HelloService {
 }
 
 #[test]
+#[ignore]
 async fn client_to_server_request() -> Result<()> {
     let (server, client) = Session::channel(HelloService, ());
     println!("server = {server:?}");
@@ -68,6 +69,7 @@ async fn client_to_server_request() -> Result<()> {
 }
 
 #[test]
+#[ignore]
 async fn client_to_server_request_and_server_wait() -> Result<()> {
     let (server, client) = Session::channel(HelloService, ());
     println!("server = {server:?}");

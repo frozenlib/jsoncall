@@ -148,7 +148,7 @@ impl<'a> Iterator for RawMessageBatchIter<'a> {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct RawMessage<'a> {
     #[serde(borrow)]
     pub jsonrpc: Cow<'a, str>,
@@ -359,6 +359,7 @@ impl From<Message> for MessageBatch {
 pub struct ErrorObject {
     pub code: i64,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<Value>,
 }
 impl ErrorObject {
@@ -387,3 +388,6 @@ pub mod error_codes {
     pub const SERVER_ERROR_START: i64 = -32000;
     pub const SERVER_ERROR_END: i64 = -32099;
 }
+
+#[cfg(test)]
+mod tests;
