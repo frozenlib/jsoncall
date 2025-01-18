@@ -726,13 +726,6 @@ impl RawSession {
     }
 }
 
-pub struct Dropper(String);
-impl Drop for Dropper {
-    fn drop(&mut self) {
-        println!("Dropper drop: {}", self.0);
-    }
-}
-
 pub struct Session(Arc<RawSession>);
 
 impl Session {
@@ -744,26 +737,9 @@ impl Session {
         let session = RawSession::new();
         {
             let s = &mut *session.lock();
-            let dr = Dropper(format!("[{}] reader drop", s.session_id));
-            let dw = Dropper(format!("[{}] writer drop", s.session_id));
-
             // By acquiring the lock before spawn, ensure that read_task.set_task and write_task.set_task are called elsewhere.
-            let read_task = spawn({
-                let session = session.clone();
-                async move {
-                    MessageDispatcher::run(session.clone(), handler, reader).await;
-                    drop(dr);
-                }
-            });
-
-            // let write_task = spawn(session.clone().run_write_task(writer));
-            let write_task = spawn({
-                let session = session.clone();
-                async move {
-                    session.run_write_task(writer).await;
-                    drop(dw);
-                }
-            });
+            let read_task = spawn(MessageDispatcher::run(session.clone(), handler, reader));
+            let write_task = spawn(session.clone().run_write_task(writer));
             s.read_task.set_task(read_task, &mut s.aborts);
             s.write_task.set_task(write_task, &mut s.aborts);
         }
