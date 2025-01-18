@@ -149,10 +149,10 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for CowEx<'_, T> {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(untagged, bound = "'de:'a")]
+#[serde(untagged)]
 pub enum RawMessageBatch<'a> {
-    Single(RawMessage<'a>),
-    Batch(Vec<RawMessage<'a>>),
+    Single(#[serde(borrow)] RawMessage<'a>),
+    Batch(#[serde(borrow)] Vec<RawMessage<'a>>),
 }
 impl<'a> IntoIterator for RawMessageBatch<'a> {
     type Item = RawMessage<'a>;
