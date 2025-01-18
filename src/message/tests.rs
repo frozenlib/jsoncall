@@ -68,7 +68,6 @@ fn raw_message_deserialize_notification() -> anyhow::Result<()> {
 
 #[test]
 fn raw_message_deserialize_escaped() -> anyhow::Result<()> {
-    // let input = r#"{"jsonrpc":"2.0","id":1,"method":"あ","params":{"param1":"value1"}}"#;
     let input = r#"{"jsonrpc":"2.0","id":1,"method":"\u3042","params":{"param1":"value1"}}"#;
     let m = serde_json::from_str::<RawMessage>(input).unwrap();
     assert_eq!(m.jsonrpc, "2.0");
@@ -97,6 +96,83 @@ fn raw_message_s_serialize_request() -> anyhow::Result<()> {
         }),
     )
 }
+#[test]
+fn raw_message_s_serialize_request_no_params() -> anyhow::Result<()> {
+    check_serailize(
+        RawMessageS::<(), ()> {
+            jsonrpc: "2.0".into(),
+            id: Some(1.into()),
+            method: Some("test_method".into()),
+            params: None,
+            result: None,
+            error: None,
+        },
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "test_method"
+        }),
+    )
+}
+#[test]
+fn raw_message_s_serialize_result() -> anyhow::Result<()> {
+    check_serailize(
+        RawMessageS::<(), _> {
+            jsonrpc: "2.0".into(),
+            id: Some(1.into()),
+            method: None,
+            params: None,
+            result: Some(&json!({"result1": "value1"})),
+            error: None,
+        },
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {"result1": "value1"}
+        }),
+    )
+}
+#[test]
+fn raw_message_s_serialize_error() -> anyhow::Result<()> {
+    check_serailize(
+        RawMessageS::<(), ()> {
+            jsonrpc: "2.0".into(),
+            id: Some(1.into()),
+            method: None,
+            params: None,
+            result: None,
+            error: Some(crate::ErrorObject {
+                code: 1,
+                message: "error message".to_string(),
+                data: None,
+            }),
+        },
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {"code": 1, "message": "error message"}
+        }),
+    )
+}
+#[test]
+fn raw_message_s_serialize_notification() -> anyhow::Result<()> {
+    check_serailize(
+        RawMessageS::<_, ()> {
+            jsonrpc: "2.0".into(),
+            id: None,
+            method: Some("test_method".into()),
+            params: Some(&json!({"param1": "value1"})),
+            result: None,
+            error: None,
+        },
+        json!({
+            "jsonrpc": "2.0",
+            "method": "test_method",
+            "params": {"param1": "value1"}
+        }),
+    )
+}
+
 fn check_serailize<P, R>(m: RawMessageS<P, R>, e: Value) -> anyhow::Result<()>
 where
     P: Serialize,
