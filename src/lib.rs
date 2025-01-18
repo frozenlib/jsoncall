@@ -381,7 +381,7 @@ where
         match m.try_into_message_enum()? {
             MessageEnum::Request(m) => self.on_request(m),
             MessageEnum::Success(m) => self.on_response(m.id, Ok(m.result)),
-            MessageEnum::Error(m) => self.on_response(m.id, Err(Error::ErrorObject(m.error))),
+            MessageEnum::Error(m) => self.on_response(m.id, Err(Error::Result(m.error))),
             MessageEnum::Notification(m) => self.on_notification(m),
         };
         Ok(())
@@ -739,7 +739,7 @@ impl Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
-        todo!()
+        self.shutdown();
     }
 }
 

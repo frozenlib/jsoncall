@@ -1,16 +1,18 @@
 use std::sync::Arc;
 
+use crate::error_codes;
+
 use super::{ErrorObject, RequestId};
 
 #[derive(Debug, Clone)]
 pub enum Error {
-    ErrorObject(ErrorObject),
+    Result(ErrorObject),
     Version(String),
     Message,
     RequestIdReused(RequestId),
     RequestIdNotFound(RequestId),
     RequestIdOverflow,
-    ParamsMissing(Vec<String>),
+    ParamsMissing,
     Serialize(Arc<serde_json::Error>),
     DeserializeParams(Arc<serde_json::Error>),
     DeserializeResponse(Arc<serde_json::Error>),
@@ -21,20 +23,15 @@ pub enum Error {
     Shutdown,
 }
 
-pub mod error_codes {
-    pub const PARSE_ERROR: i64 = -32700;
-    pub const INVALID_REQUEST: i64 = -32600;
-    pub const METHOD_NOT_FOUND: i64 = -32601;
-    pub const INVALID_PARAMS: i64 = -32602;
-    pub const INTERNAL_ERROR: i64 = -32603;
-    pub const SERVER_ERROR_START: i64 = -32000;
-    pub const SERVER_ERROR_END: i64 = -32099;
-}
-
 impl Error {
-    pub fn into_error_object(self) -> ErrorObject {
+    pub fn into_response_error(self) -> ErrorObject {
         match self {
-            Error::ErrorObject(err) => err,
+            Error::Result(e) => ErrorObject {
+                // Since it is an error of another request, it does not inherit the code.
+                code: error_codes::INTERNAL_ERROR,
+                message: e.message,
+                data: e.data,
+            },
             Error::Version(_) => ErrorObject {
                 code: error_codes::INVALID_REQUEST,
                 message: "Unsupported JSON-RPC version".to_string(),
@@ -60,10 +57,10 @@ impl Error {
                 message: "Request ID overflow".to_string(),
                 data: None,
             },
-            Error::ParamsMissing(params) => ErrorObject {
+            Error::ParamsMissing => ErrorObject {
                 code: error_codes::INVALID_PARAMS,
-                message: "Params missing".to_string(),
-                data: Some(serde_json::json!({"params":params})),
+                message: "params is required but missing".to_string(),
+                data: None,
             },
             Error::Serialize(err) => ErrorObject {
                 code: error_codes::INTERNAL_ERROR,
@@ -72,12 +69,12 @@ impl Error {
             },
             Error::DeserializeResponse(err) => ErrorObject {
                 code: error_codes::INTERNAL_ERROR,
-                message: "Deserialize reseponse error".to_string(),
+                message: "Deserialize reseponse failed".to_string(),
                 data: Some(serde_json::json!(err.to_string())),
             },
             Error::DeserializeParams(err) => ErrorObject {
                 code: error_codes::INVALID_PARAMS,
-                message: "Deserialize params error".to_string(),
+                message: "Deserialize params failed".to_string(),
                 data: Some(serde_json::json!(err.to_string())),
             },
             Error::Read(err) => ErrorObject {

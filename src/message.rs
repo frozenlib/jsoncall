@@ -176,7 +176,7 @@ impl MessageData {
     pub fn from_error(id: Option<RequestId>, e: Error) -> Self {
         Self::from_raw_message_s::<(), ()>(&RawMessageS {
             id,
-            error: Some(e.into_error_object()),
+            error: Some(e.into_response_error()),
             ..Default::default()
         })
         .unwrap()
