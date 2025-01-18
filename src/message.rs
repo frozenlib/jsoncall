@@ -288,6 +288,22 @@ pub struct ErrorObject {
     pub message: String,
     pub data: Option<Value>,
 }
+impl ErrorObject {
+    pub(crate) fn new(code: i64, message: &str) -> Self {
+        Self {
+            code,
+            message: message.to_string(),
+            data: None,
+        }
+    }
+    pub(crate) fn with_data(self, data: Value) -> Self {
+        Self {
+            data: Some(data),
+            ..self
+        }
+    }
+}
+
 pub mod error_codes {
     pub const PARSE_ERROR: i64 = -32700;
     pub const INVALID_REQUEST: i64 = -32600;

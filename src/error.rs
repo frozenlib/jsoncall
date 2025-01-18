@@ -59,7 +59,7 @@ impl Error {
             },
             Error::ParamsMissing => ErrorObject {
                 code: error_codes::INVALID_PARAMS,
-                message: "params is required but missing".to_string(),
+                message: "`params` is required but missing".to_string(),
                 data: None,
             },
             Error::Serialize(e) => ErrorObject {
