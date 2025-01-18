@@ -296,12 +296,6 @@ impl ErrorObject {
             data: None,
         }
     }
-    pub(crate) fn with_data(self, data: Value) -> Self {
-        Self {
-            data: Some(data),
-            ..self
-        }
-    }
     pub(crate) fn with_detail(self, detail: impl std::fmt::Display) -> Self {
         let detail = detail.to_string();
         Self {
