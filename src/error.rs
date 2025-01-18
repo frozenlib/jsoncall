@@ -62,35 +62,35 @@ impl Error {
                 message: "params is required but missing".to_string(),
                 data: None,
             },
-            Error::Serialize(err) => ErrorObject {
+            Error::Serialize(e) => ErrorObject {
                 code: error_codes::INTERNAL_ERROR,
                 message: "Serialize failed".to_string(),
-                data: Some(serde_json::json!(err.to_string())),
+                data: Some(serde_json::json!(e.to_string())),
             },
-            Error::DeserializeResponse(err) => ErrorObject {
+            Error::DeserializeResponse(e) => ErrorObject {
                 code: error_codes::INTERNAL_ERROR,
                 message: "Deserialize reseponse failed".to_string(),
-                data: Some(serde_json::json!(err.to_string())),
+                data: Some(serde_json::json!(e.to_string())),
             },
-            Error::DeserializeParams(err) => ErrorObject {
+            Error::DeserializeParams(e) => ErrorObject {
                 code: error_codes::INVALID_PARAMS,
                 message: "Deserialize params failed".to_string(),
-                data: Some(serde_json::json!(err.to_string())),
+                data: Some(serde_json::json!(e.to_string())),
             },
-            Error::Read(err) => ErrorObject {
+            Error::Read(e) => ErrorObject {
                 code: error_codes::INTERNAL_ERROR,
                 message: "Read error".to_string(),
-                data: Some(serde_json::json!(err.to_string())),
+                data: Some(serde_json::json!(e.to_string())),
             },
             Error::ReadEnd => ErrorObject {
                 code: error_codes::INTERNAL_ERROR,
                 message: "Read end".to_string(),
                 data: None,
             },
-            Error::Write(err) => ErrorObject {
+            Error::Write(e) => ErrorObject {
                 code: error_codes::INTERNAL_ERROR,
                 message: "Write error".to_string(),
-                data: Some(serde_json::json!(err.to_string())),
+                data: Some(serde_json::json!(e.to_string())),
             },
             Error::WriteEnd => ErrorObject {
                 code: error_codes::INTERNAL_ERROR,
