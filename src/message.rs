@@ -34,6 +34,12 @@ impl From<OutgoingRequestId> for RequestId {
 impl TryFrom<RequestId> for OutgoingRequestId {
     type Error = Error;
     fn try_from(id: RequestId) -> Result<OutgoingRequestId> {
+        TryFrom::<&RequestId>::try_from(&id)
+    }
+}
+impl TryFrom<&RequestId> for OutgoingRequestId {
+    type Error = Error;
+    fn try_from(id: &RequestId) -> Result<OutgoingRequestId> {
         match id.0 {
             RawRequestId::U128(n) => return Ok(OutgoingRequestId(n)),
             RawRequestId::I128(n) => {
@@ -52,7 +58,7 @@ impl TryFrom<RequestId> for OutgoingRequestId {
                 }
             }
         }
-        Err(Error::RequestIdNotFound(id))
+        Err(Error::RequestIdNotFound)
     }
 }
 
@@ -107,15 +113,39 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for CowEx<'_, T> {
 }
 
 #[derive(Debug, Deserialize)]
-pub enum RawBatch<'a> {
+pub enum RawMessageBatch<'a> {
     Single(#[serde(borrow)] RawMessage<'a>),
     Batch(Vec<RawMessage<'a>>),
 }
-impl<'a> RawBatch<'a> {
+impl<'a> RawMessageBatch<'a> {
     pub fn as_slice(&self) -> &[RawMessage<'a>] {
         match self {
-            RawBatch::Single(msg) => std::slice::from_ref(msg),
-            RawBatch::Batch(vec) => vec,
+            RawMessageBatch::Single(msg) => std::slice::from_ref(msg),
+            RawMessageBatch::Batch(vec) => vec,
+        }
+    }
+}
+impl<'a> IntoIterator for RawMessageBatch<'a> {
+    type Item = RawMessage<'a>;
+    type IntoIter = RawMessageBatchIter<'a>;
+    fn into_iter(self) -> Self::IntoIter {
+        match self {
+            RawMessageBatch::Single(msg) => RawMessageBatchIter::One(Some(msg)),
+            RawMessageBatch::Batch(vec) => RawMessageBatchIter::Many(vec.into_iter()),
+        }
+    }
+}
+
+pub enum RawMessageBatchIter<'a> {
+    One(Option<RawMessage<'a>>),
+    Many(std::vec::IntoIter<RawMessage<'a>>),
+}
+impl<'a> Iterator for RawMessageBatchIter<'a> {
+    type Item = RawMessage<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            RawMessageBatchIter::One(msg) => msg.take(),
+            RawMessageBatchIter::Many(iter) => iter.next(),
         }
     }
 }
@@ -135,7 +165,7 @@ pub struct RawMessage<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ErrorObject>,
 }
-impl RawMessage<'_> {
+impl<'a> RawMessage<'a> {
     pub(crate) fn verify_version(&self) -> Result<()> {
         if self.jsonrpc == "2.0" {
             Ok(())
@@ -143,7 +173,7 @@ impl RawMessage<'_> {
             Err(Error::Version)
         }
     }
-    pub fn to_varients(&self) -> RawMessageVariants {
+    pub fn into_varients(self) -> Result<RawMessageVariants<'a>> {
         match self {
             RawMessage {
                 id: Some(id),
@@ -152,11 +182,7 @@ impl RawMessage<'_> {
                 result: None,
                 error: None,
                 ..
-            } => RawMessageVariants::Request {
-                id,
-                method,
-                params: *params,
-            },
+            } => Ok(RawMessageVariants::Request { id, method, params }),
             RawMessage {
                 id: Some(id),
                 method: None,
@@ -164,7 +190,7 @@ impl RawMessage<'_> {
                 result: Some(result),
                 error: None,
                 ..
-            } => RawMessageVariants::Success { id, result },
+            } => Ok(RawMessageVariants::Success { id, result }),
             RawMessage {
                 id,
                 method: None,
@@ -172,7 +198,7 @@ impl RawMessage<'_> {
                 result: None,
                 error: Some(error),
                 ..
-            } => RawMessageVariants::Error { id, error },
+            } => Ok(RawMessageVariants::Error { id, error }),
             RawMessage {
                 id: None,
                 method: Some(method),
@@ -180,28 +206,25 @@ impl RawMessage<'_> {
                 result: None,
                 error: None,
                 ..
-            } => RawMessageVariants::Notification {
-                method,
-                params: *params,
-            },
-            _ => unreachable!(),
+            } => Ok(RawMessageVariants::Notification { method, params }),
+            _ => Err(Error::Message),
         }
     }
 }
 
 pub(crate) enum RawMessageVariants<'a> {
     Request {
-        id: &'a RequestId,
+        id: RequestId,
         method: &'a str,
         params: Option<&'a RawValue>,
     },
     Success {
-        id: &'a RequestId,
+        id: RequestId,
         result: &'a RawValue,
     },
     Error {
-        id: &'a Option<RequestId>,
-        error: &'a ErrorObject,
+        id: Option<RequestId>,
+        error: ErrorObject,
     },
     Notification {
         method: &'a str,

@@ -9,7 +9,7 @@ use std::{
 
 use futures::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::{value::RawValue, Map, Value};
+use serde_json::value::RawValue;
 use tokio::{spawn, task::JoinHandle};
 
 mod error;
@@ -35,7 +35,7 @@ pub trait Handler {
 pub const NO_PARAMS: Option<()> = None;
 
 #[derive(Clone, Copy, Debug)]
-pub struct Params<'a>(&'a Option<Map<String, Value>>);
+pub struct Params<'a>(Option<&'a RawValue>);
 
 impl Params<'_> {
     pub fn to<'b, T>(&'b self) -> Result<T>
@@ -64,25 +64,13 @@ impl Params<'_> {
 }
 
 pub struct RequestContext<'a> {
-    id: RequestId,
-    method: String,
-    params: Option<Map<String, Value>>,
+    id: &'a RequestId,
     session: &'a Arc<RawSession>,
 }
 
 impl<'a> RequestContext<'a> {
-    fn new(
-        id: RequestId,
-        method: String,
-        params: Option<Map<String, Value>>,
-        session: &'a Arc<RawSession>,
-    ) -> Self {
-        Self {
-            id,
-            method,
-            params,
-            session,
-        }
+    fn new(id: &'a RequestId, session: &'a Arc<RawSession>) -> Self {
+        Self { id, session }
     }
 
     pub fn success<T>(self, result: &T) -> Result<Response>
@@ -90,7 +78,7 @@ impl<'a> RequestContext<'a> {
         T: Serialize,
     {
         Ok(
-            RawRequestResponse::Success(MessageData::from_success(self.id, result)?)
+            RawRequestResponse::Success(MessageData::from_success(self.id.clone(), result)?)
                 .into_response(),
         )
     }
@@ -99,7 +87,7 @@ impl<'a> RequestContext<'a> {
         future: impl Future<Output = Result<impl Serialize>> + Send + Sync + 'static,
     ) -> Result<Response> {
         let s = self.session();
-        let id = self.id;
+        let id = self.id.clone();
         Ok(RawRequestResponse::Spawn(spawn(async move {
             let r = future.await;
             if let Some(s) = s.0.upgrade() {
@@ -241,16 +229,16 @@ impl IncomingRequestState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct OutgoingRequestId(u128);
+struct OutgoingRequestId(u128);
 
 trait OutgoingRequest: Send + Sync + 'static {
-    fn set_ready(&self, result: Result<Value>);
+    fn set_ready(&self, result: Result<&RawValue>);
 }
 impl<T> OutgoingRequest for Mutex<OutgoingRequestState<T>>
 where
     T: DeserializeOwned + Send + Sync + 'static,
 {
-    fn set_ready(&self, result: Result<Value>) {
+    fn set_ready(&self, result: Result<&RawValue>) {
         self.lock().unwrap().set_ready(result);
     }
 }
@@ -287,11 +275,9 @@ where
             }
         }
     }
-    fn set_ready(&mut self, result: Result<Value>) {
+    fn set_ready(&mut self, result: Result<&RawValue>) {
         let result = match result {
-            Ok(value) => {
-                serde_json::from_value(value).map_err(|e| Error::DeserializeResponse(Arc::new(e)))
-            }
+            Ok(value) => T::deserialize(value).map_err(|e| Error::DeserializeResponse(Arc::new(e))),
             Err(e) => Err(e),
         };
         let old = mem::replace(self, Self::Ready(result));
@@ -384,15 +370,15 @@ where
             if len == 0 {
                 break;
             }
-            let b: RawBatch =
+            let b: RawMessageBatch =
                 serde_json::from_str(&s).map_err(|e| Error::DeserializeJson(Arc::new(e)))?;
-            for m in b.as_slice() {
+            for m in b {
                 self.on_message_one(m).await;
             }
         }
         todo!()
     }
-    async fn on_message_one<'a>(&mut self, m: &RawMessage<'a>) {
+    async fn on_message_one<'a>(&mut self, m: RawMessage<'a>) {
         let id = m.id.clone();
         match self.dispatch_message(m) {
             Ok(()) => {}
@@ -404,48 +390,42 @@ where
             }
         }
     }
-    fn dispatch_message(&mut self, m: &RawMessage) -> Result<()> {
-        // match m.try_into_message_enum()? {
-        //     MessageEnum::Request(m) => self.on_request(m),
-        //     MessageEnum::Success(m) => self.on_response(m.id, Ok(m.result)),
-        //     MessageEnum::Error(m) => self.on_response(m.id, Err(Error::Result(m.error))),
-        //     MessageEnum::Notification(m) => self.on_notification(m),
-        // };
-        match m.to_varients() {
+    fn dispatch_message(&mut self, m: RawMessage) -> Result<()> {
+        match m.into_varients()? {
             RawMessageVariants::Request { id, method, params } => {
                 self.on_request(id, method, params)
             }
-            RawMessageVariants::Success { id, result } => {}
-            RawMessageVariants::Error { id, error } => {}
-            RawMessageVariants::Notification { method, params } => {}
+            RawMessageVariants::Success { id, result } => {
+                self.on_response(id, Ok(result));
+            }
+            RawMessageVariants::Error { id, error } => {
+                if let Some(id) = id {
+                    self.on_response(id, Err(Error::Result(error)));
+                }
+            }
+            RawMessageVariants::Notification { method, params } => {
+                self.on_notification(method, params);
+            }
         }
         Ok(())
     }
-    fn on_request(&mut self, id: &RequestId, method: &str, params: Option<&RawValue>) {
-        if !self.session.lock().insert_incoming_request(id) {
+    fn on_request(&mut self, id: RequestId, method: &str, params: Option<&RawValue>) {
+        if !self.session.lock().insert_incoming_request(&id) {
             return;
         }
 
-        let params_map = params.map(|p| serde_json::from_str(p.get()).unwrap_or_default());
-
-        let cx = RequestContext {
-            id: id.clone(),
-            method: method.to_string(),
-            params: params_map.clone(),
-            session: &self.session,
-        };
-
-        let params = Params(&params_map);
+        let cx = RequestContext::new(&id, &self.session);
+        let params = Params(params);
         let r = self.handler.request(method, params, cx);
 
         let s = &mut *self.session.lock();
-        if let Some(ir) = s.incoming_requests.get_mut(id) {
-            if ir.init_finish(id, r, &mut s.aborts, &mut s.outgoing_buffer) {
-                s.remove_incoming_request(id);
+        if let Some(ir) = s.incoming_requests.get_mut(&id) {
+            if ir.init_finish(&id, r, &mut s.aborts, &mut s.outgoing_buffer) {
+                s.remove_incoming_request(&id);
             }
         }
     }
-    fn on_response(&self, id: RequestId, result: Result<Value>) {
+    fn on_response(&self, id: RequestId, result: Result<&RawValue>) {
         let Ok(id) = id.try_into() else {
             return;
         };
@@ -456,10 +436,10 @@ where
         s.set_ready(result);
     }
 
-    fn on_notification(&mut self, m: NotificationMessage) {
+    fn on_notification(&mut self, method: &str, params: Option<&RawValue>) {
         let cx = NotificationContext::new(&self.session);
-        let params = Params(&m.params);
-        let _r = self.handler.notification(&m.method, params, cx);
+        let params = Params(params);
+        let _r = self.handler.notification(method, params, cx);
     }
 }
 

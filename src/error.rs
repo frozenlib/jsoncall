@@ -10,7 +10,7 @@ pub enum Error {
     Version,
     Message,
     RequestIdReused(RequestId),
-    RequestIdNotFound(RequestId),
+    RequestIdNotFound,
     RequestIdOverflow,
     ParamsMissing,
     Serialize(Arc<serde_json::Error>),
@@ -42,7 +42,7 @@ impl Error {
             Error::RequestIdReused(_) => {
                 ErrorObject::new(error_codes::INVALID_REQUEST, "Request ID reused")
             }
-            Error::RequestIdNotFound(_) => {
+            Error::RequestIdNotFound => {
                 ErrorObject::new(error_codes::INVALID_REQUEST, "Request ID not found")
             }
             Error::RequestIdOverflow => {
