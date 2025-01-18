@@ -1,9 +1,7 @@
-use std::alloc::handle_alloc_error;
-
 use anyhow::Result;
 use jsoncall::{Handler, Params, RequestContext, Session};
 use serde::{Deserialize, Serialize};
-use tokio::{runtime::Handle, spawn, test};
+use tokio::{spawn, test};
 
 #[test]
 async fn channel() {
@@ -67,5 +65,4 @@ async fn client_to_server_request() -> Result<()> {
     server.await??;
 
     Ok(())
-
 }
