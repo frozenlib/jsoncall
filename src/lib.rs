@@ -501,6 +501,7 @@ impl TaskHandle {
     fn abort(&mut self, aborts: &mut AbortingHandles) {
         self.is_abort = true;
         if let Some(task) = self.task.take() {
+            println!("abort");
             aborts.push(task);
         }
     }
@@ -593,6 +594,7 @@ impl SessionState {
     }
 
     fn can_exit_write_task(&self) -> bool {
+        println!("[{}]: can_exit_write_task", self.session_id);
         !self.read_state.is_running() && self.incoming_requests.is_empty()
     }
 
@@ -646,14 +648,15 @@ impl SessionState {
     }
 
     fn finish_read_state(&mut self, r: Result<()>) {
-        println!("finish_read_state");
+        println!("[{}]: finish_read_state", self.session_id);
         self.read_state.finish(r);
         dbg!(&self.read_state);
         self.apply_error();
         self.server_waker.wake();
+        self.outgoing_buffer.waker.wake();
     }
     fn finish_write_state(&mut self, r: Result<()>) {
-        println!("finish_write_state");
+        println!("[{}]: finish_write_state", self.session_id);
         self.write_state.finish(r);
         self.apply_error();
         self.server_waker.wake();
@@ -718,19 +721,26 @@ impl RawSession {
     ) -> Result<(), std::io::Error> {
         let mut messages = Vec::new();
         let mut writer = pin!(writer);
-        loop {
-            self.read_ongoing_messages(&mut messages).await;
+        while self.read_ongoing_messages(&mut messages).await {
             for mut m in messages.drain(..) {
                 m.0.push('\n');
                 writer.write_all(m.0.as_bytes()).await?;
             }
             writer.flush().await?;
         }
+        Ok(())
     }
 
     async fn read_ongoing_messages(self: &Arc<Self>, messages: &mut Vec<MessageData>) -> bool {
         assert!(messages.is_empty());
         poll_fn(|cx| self.lock().poll_swap_outgoing_messages(messages, cx)).await
+    }
+}
+
+pub struct Dropper(String);
+impl Drop for Dropper {
+    fn drop(&mut self) {
+        println!("Dropper drop: {}", self.0);
     }
 }
 
@@ -745,9 +755,26 @@ impl Session {
         let session = RawSession::new();
         {
             let s = &mut *session.lock();
+            let dr = Dropper(format!("[{}] reader drop", s.session_id));
+            let dw = Dropper(format!("[{}] writer drop", s.session_id));
+
             // By acquiring the lock before spawn, ensure that read_task.set_task and write_task.set_task are called elsewhere.
-            let read_task = spawn(MessageDispatcher::run(session.clone(), handler, reader));
-            let write_task = spawn(session.clone().run_write_task(writer));
+            let read_task = spawn({
+                let session = session.clone();
+                async move {
+                    MessageDispatcher::run(session.clone(), handler, reader).await;
+                    drop(dr);
+                }
+            });
+
+            // let write_task = spawn(session.clone().run_write_task(writer));
+            let write_task = spawn({
+                let session = session.clone();
+                async move {
+                    session.run_write_task(writer).await;
+                    drop(dw);
+                }
+            });
             s.read_task.set_task(read_task, &mut s.aborts);
             s.write_task.set_task(write_task, &mut s.aborts);
         }
@@ -760,8 +787,8 @@ impl Session {
         let (d0, d1) = duplex(1024);
         let (r0, w0) = split(d0);
         let (r1, w1) = split(d1);
-        let s0 = Self::new(handler0, BufReader::new(r0), w1);
-        let s1 = Self::new(handler1, BufReader::new(r1), w0);
+        let s0 = Self::new(handler0, BufReader::new(r0), w0);
+        let s1 = Self::new(handler1, BufReader::new(r1), w1);
         (s0, s1)
     }
 
