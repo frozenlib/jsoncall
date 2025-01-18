@@ -7,7 +7,6 @@ async fn main() -> anyhow::Result<()> {
     println!("server = {server:?}");
     println!("client = {client:?}");
 
-    println!("requste start");
     let response: HelloResponse = client
         .request(
             "hello",
@@ -16,12 +15,12 @@ async fn main() -> anyhow::Result<()> {
             }),
         )
         .await?;
-    println!("requste finished");
+    println!("response {response:?}");
+    drop(client);
     assert_eq!(response.message, "Hello, Alice!");
     server.wait().await?;
     Ok(())
 }
-
 #[derive(Debug, Serialize, Deserialize)]
 struct HelloRequest {
     name: String,
@@ -33,6 +32,13 @@ struct HelloResponse {
 }
 
 struct HelloService;
+impl HelloService {
+    fn hello(&self, req: HelloRequest) -> HelloResponse {
+        HelloResponse {
+            message: format!("Hello, {}!", req.name),
+        }
+    }
+}
 impl Handler for HelloService {
     fn request(
         &mut self,
@@ -41,13 +47,7 @@ impl Handler for HelloService {
         cx: RequestContext,
     ) -> jsoncall::Result<jsoncall::Response> {
         match method {
-            "hello" => {
-                let request: HelloRequest = params.to()?;
-                let response = HelloResponse {
-                    message: format!("Hello, {}!", request.name),
-                };
-                Ok(cx.success(&response)?)
-            }
+            "hello" => Ok(cx.success(&self.hello(params.to()?))?),
             _ => Err(jsoncall::Error::MethodNotFound),
         }
     }
