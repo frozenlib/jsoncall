@@ -107,6 +107,20 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for CowEx<'_, T> {
 }
 
 #[derive(Debug, Deserialize)]
+pub enum RawBatch<'a> {
+    Single(#[serde(borrow)] RawMessage<'a>),
+    Batch(Vec<RawMessage<'a>>),
+}
+impl<'a> RawBatch<'a> {
+    pub fn as_slice(&self) -> &[RawMessage<'a>] {
+        match self {
+            RawBatch::Single(msg) => std::slice::from_ref(msg),
+            RawBatch::Batch(vec) => vec,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
 pub struct RawMessage<'a> {
     #[serde(borrow)]
     pub jsonrpc: Cow<'a, str>,

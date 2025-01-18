@@ -6,6 +6,8 @@
 - テスト
   - 自実装同士の通信
   - 他実装との通信
+- SmallString,SmallVec の利用
+- RawBatch,Batch の詳細を隠す
 
 ## 通常優先度
 

@@ -14,6 +14,7 @@ pub enum Error {
     RequestIdOverflow,
     ParamsMissing,
     Serialize(Arc<serde_json::Error>),
+    DeserializeJson(Arc<serde_json::Error>),
     DeserializeParams(Arc<serde_json::Error>),
     DeserializeResponse(Arc<serde_json::Error>),
     Read(Arc<std::io::Error>),
@@ -53,6 +54,10 @@ impl Error {
             ),
             Error::Serialize(e) => {
                 ErrorObject::new(error_codes::INTERNAL_ERROR, "Serialize failed").with_detail(e)
+            }
+            Error::DeserializeJson(e) => {
+                ErrorObject::new(error_codes::INVALID_REQUEST, "Deserialize JSON failed")
+                    .with_detail(e)
             }
             Error::DeserializeResponse(e) => {
                 ErrorObject::new(error_codes::INTERNAL_ERROR, "Deserialize reseponse failed")

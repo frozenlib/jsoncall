@@ -7,7 +7,7 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-use futures::{AsyncWrite, AsyncWriteExt};
+use futures::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tokio::{spawn, task::JoinHandle};
@@ -352,20 +352,32 @@ impl<H> MessageDispatcher<H>
 where
     H: Handler + Send + Sync,
 {
-    async fn run(session: Arc<RawSession>, handler: H, reader: impl MessageRead + Send + Sync) {
+    async fn run(session: Arc<RawSession>, handler: H, reader: impl AsyncBufRead + Send + Sync) {
         let mut this = Self { session, handler };
         let r = this.run_raw(reader).await;
         this.session.lock().finish_read_state(r);
     }
-    async fn run_raw(&mut self, mut reader: impl MessageRead + Send + Sync) -> Result<()> {
-        while let Some(b) = reader.read().await? {
-            for m in b {
+    async fn run_raw(&mut self, mut reader: impl AsyncBufRead + Send + Sync) -> Result<()> {
+        let mut reader = pin!(reader);
+        let mut s = String::new();
+        loop {
+            s.clear();
+            let len = reader
+                .read_line(&mut s)
+                .await
+                .map_err(|e| Error::Read(Arc::new(e)))?;
+            if len == 0 {
+                break;
+            }
+            let b: RawBatch =
+                serde_json::from_str(&s).map_err(|e| Error::DeserializeJson(Arc::new(e)))?;
+            for m in b.as_slice() {
                 self.on_message_one(m).await;
             }
         }
-        Ok(())
+        todo!()
     }
-    async fn on_message_one(&mut self, m: Message) {
+    async fn on_message_one<'a>(&mut self, m: RawMessage<'a>) {
         let id = m.id.clone();
         match self.dispatch_message(m) {
             Ok(()) => {}
@@ -377,7 +389,7 @@ where
             }
         }
     }
-    fn dispatch_message(&mut self, m: Message) -> Result<()> {
+    fn dispatch_message(&mut self, m: RawMessage) -> Result<()> {
         match m.try_into_message_enum()? {
             MessageEnum::Request(m) => self.on_request(m),
             MessageEnum::Success(m) => self.on_response(m.id, Ok(m.result)),
@@ -686,7 +698,7 @@ pub struct Session(Arc<RawSession>);
 impl Session {
     pub fn new(
         handler: impl Handler + Send + Sync + 'static,
-        reader: impl MessageRead + Send + Sync + 'static,
+        reader: impl AsyncBufRead + Send + Sync + 'static,
         writer: impl AsyncWrite + Send + Sync + 'static,
     ) -> Self {
         let session = RawSession::new();
