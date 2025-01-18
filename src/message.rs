@@ -3,7 +3,7 @@ use std::sync::Arc;
 use derive_ex::derive_ex;
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 
 use crate::OutgoingRequestId;
 
@@ -299,6 +299,13 @@ impl ErrorObject {
     pub(crate) fn with_data(self, data: Value) -> Self {
         Self {
             data: Some(data),
+            ..self
+        }
+    }
+    pub(crate) fn with_detail(self, detail: impl std::fmt::Display) -> Self {
+        let detail = detail.to_string();
+        Self {
+            data: Some(json!({ "detail": detail })),
             ..self
         }
     }
