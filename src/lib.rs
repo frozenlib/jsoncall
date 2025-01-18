@@ -195,7 +195,7 @@ impl IncomingRequestState {
         aborts: &mut AbortingHandles,
         ob: &mut OutgoingBuffer,
     ) -> bool {
-        assert!(self.is_init_finished);
+        assert!(!self.is_init_finished);
         self.is_init_finished = true;
         let md = match r {
             Ok(r) => match r.0 {
