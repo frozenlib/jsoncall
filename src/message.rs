@@ -173,7 +173,7 @@ impl<'a> RawMessage<'a> {
             Err(Error::Version)
         }
     }
-    pub fn into_varients(self) -> Result<RawMessageVariants<'a>> {
+    pub(crate) fn into_varients(self) -> Result<RawMessageVariants<'a>> {
         self.verify_version()?;
         match self {
             RawMessage {
@@ -347,60 +347,10 @@ impl Default for Message {
     }
 }
 
-impl Message {
-    pub(super) fn try_into_message_enum(self) -> Result<MessageEnum> {
-        if self.jsonrpc != "2.0" {
-            return Err(Error::Version);
-        }
-        match (self.id, self.method, self.result, self.error) {
-            (Some(id), Some(method), None, None) => Ok(MessageEnum::Request(RequestMessage {
-                id,
-                method,
-                params: self.params,
-            })),
-            (Some(id), _, Some(result), None) => {
-                Ok(MessageEnum::Success(SuccessMessage { id, result }))
-            }
-            (Some(id), _, None, Some(error)) => Ok(MessageEnum::Error(ErrorMessage { id, error })),
-            (None, Some(method), None, None) => {
-                Ok(MessageEnum::Notification(NotificationMessage {
-                    method,
-                    params: self.params,
-                }))
-            }
-            _ => Err(Error::Message),
-        }
-    }
-}
 impl From<Message> for MessageBatch {
     fn from(msg: Message) -> Self {
         MessageBatch::Single(msg)
     }
-}
-
-pub(super) enum MessageEnum {
-    Request(RequestMessage),
-    Success(SuccessMessage),
-    Error(ErrorMessage),
-    Notification(NotificationMessage),
-}
-
-pub(super) struct RequestMessage {
-    pub id: RequestId,
-    pub method: String,
-    pub params: Option<Map<String, Value>>,
-}
-pub(super) struct SuccessMessage {
-    pub id: RequestId,
-    pub result: Value,
-}
-pub(super) struct ErrorMessage {
-    pub id: RequestId,
-    pub error: ErrorObject,
-}
-pub(super) struct NotificationMessage {
-    pub method: String,
-    pub params: Option<Map<String, Value>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
