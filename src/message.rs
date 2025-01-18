@@ -106,6 +106,22 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for CowEx<'_, T> {
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct RawMessage<'a> {
+    #[serde(borrow)]
+    pub jsonrpc: Cow<'a, str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<RequestId>,
+    #[serde(skip_serializing_if = "Option::is_none", borrow)]
+    pub method: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none", borrow)]
+    pub params: Option<&'a RawValue>,
+    #[serde(skip_serializing_if = "Option::is_none", borrow)]
+    pub result: Option<&'a RawValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<ErrorObject>,
+}
+
 #[derive(Debug, Serialize)]
 #[derive_ex(Default, bound())]
 pub(crate) struct RawMessageS<'a, P, R> {
@@ -191,22 +207,6 @@ impl MessageData {
             Err(e) => Self::from_error(Some(id), e),
         }
     }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RawMessage<'a> {
-    #[serde(borrow)]
-    pub jsonrpc: Cow<'a, str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<RequestId>,
-    #[serde(skip_serializing_if = "Option::is_none", borrow)]
-    pub method: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none", borrow)]
-    pub params: Option<&'a RawValue>,
-    #[serde(skip_serializing_if = "Option::is_none", borrow)]
-    pub result: Option<&'a RawValue>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<ErrorObject>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
