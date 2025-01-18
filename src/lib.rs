@@ -9,7 +9,7 @@ use std::{
 
 use futures::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{value::RawValue, Map, Value};
 use tokio::{spawn, task::JoinHandle};
 
 mod error;
@@ -396,22 +396,31 @@ where
         //     MessageEnum::Error(m) => self.on_response(m.id, Err(Error::Result(m.error))),
         //     MessageEnum::Notification(m) => self.on_notification(m),
         // };
-        match m.to_varients() {}
+        match m.to_varients() {
+            RawMessageVariants::Request { id, method, params } => {
+                self.on_request(id, method, params)
+            }
+            RawMessageVariants::Success { id, result } => {}
+            RawMessageVariants::Error { id, error } => {}
+            RawMessageVariants::Notification { method, params } => {}
+        }
         Ok(())
     }
-    fn on_request(&mut self, m: RequestMessage) {
-        if !self.session.lock().insert_incoming_request(&m.id) {
-            return;
-        }
-        let cx = RequestContext::new(&m, &self.session);
-        let params = Params(&m.params);
-        let r = self.handler.request(&m.method, params, cx);
-        let s = &mut *self.session.lock();
-        if let Some(ir) = s.incoming_requests.get_mut(&m.id) {
-            if ir.init_finish(&m.id, r, &mut s.aborts, &mut s.outgoing_buffer) {
-                s.remove_incoming_request(&m.id);
-            }
-        }
+    // fn on_request(&mut self, m: RequestMessage) {
+    fn on_request(&mut self, id: &RequestId, method: &str, params: Option<&RawValue>) {
+
+        // if !self.session.lock().insert_incoming_request(&m.id) {
+        //     return;
+        // }
+        // let cx = RequestContext::new(&m, &self.session);
+        // let params = Params(&m.params);
+        // let r = self.handler.request(&m.method, params, cx);
+        // let s = &mut *self.session.lock();
+        // if let Some(ir) = s.incoming_requests.get_mut(&m.id) {
+        //     if ir.init_finish(&m.id, r, &mut s.aborts, &mut s.outgoing_buffer) {
+        //         s.remove_incoming_request(&m.id);
+        //     }
+        // }
     }
     fn on_response(&self, id: RequestId, result: Result<Value>) {
         let Ok(id) = id.try_into() else {
