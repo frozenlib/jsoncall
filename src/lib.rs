@@ -599,6 +599,13 @@ impl SessionState {
     }
 
     fn can_exit_write_task(&self) -> bool {
+        println!(
+            "[{}] can_exit_write_task: read_state = {:?}, write_state = {:?}, incoming_requests = {:?}",
+            self.session_id,
+            self.read_state,
+            self.write_state,
+            self.incoming_requests.len()
+        );
         !self.read_state.is_running() && self.incoming_requests.is_empty()
     }
 
@@ -609,9 +616,10 @@ impl SessionState {
     ) -> Poll<bool> {
         if self.outgoing_buffer.messages.is_empty() {
             if self.can_exit_write_task() {
-                return Poll::Ready(false);
+                Poll::Ready(false)
+            } else {
+                self.outgoing_buffer.waker.set(cx)
             }
-            self.outgoing_buffer.waker.set(cx)
         } else {
             mem::swap(messages, &mut self.outgoing_buffer.messages);
             Poll::Ready(true)
@@ -649,12 +657,21 @@ impl SessionState {
     }
 
     fn finish_read_state(&mut self, r: Result<()>) {
+        match &r {
+            Ok(()) => {
+                self.outgoing_buffer.waker.wake();
+            }
+            Err(e) => {
+                self.outgoing_buffer
+                    .push(MessageData::from_error(None, e.clone()));
+            }
+        }
         self.read_state.finish(r);
         self.apply_error();
         self.server_waker.wake();
-        self.outgoing_buffer.waker.wake();
     }
     fn finish_write_state(&mut self, r: Result<()>) {
+        println!("[{}] finish_write_state", self.session_id);
         self.write_state.finish(r);
         self.apply_error();
         self.server_waker.wake();
@@ -726,6 +743,7 @@ impl RawSession {
             }
             writer.flush().await?;
         }
+        println!("[{}] end of write task", self.lock().session_id);
         Ok(())
     }
 
@@ -735,7 +753,10 @@ impl RawSession {
     }
 }
 
-pub struct Session(Arc<RawSession>);
+pub struct Session {
+    raw: Arc<RawSession>,
+    id: usize,
+}
 
 impl Session {
     pub fn new(
@@ -744,6 +765,7 @@ impl Session {
         writer: impl AsyncWrite + Send + Sync + 'static,
     ) -> Self {
         let session = RawSession::new();
+        let id;
         {
             let s = &mut *session.lock();
             // By acquiring the lock before spawn, ensure that read_task.set_task and write_task.set_task are called elsewhere.
@@ -751,8 +773,9 @@ impl Session {
             let write_task = spawn(session.clone().run_write_task(writer));
             s.read_task.set_task(read_task, &mut s.aborts);
             s.write_task.set_task(write_task, &mut s.aborts);
+            id = s.session_id;
         }
-        Self(session)
+        Self { raw: session, id }
     }
     pub fn channel(
         handler0: impl Handler + Send + Sync + 'static,
@@ -771,36 +794,42 @@ impl Session {
         P: Serialize,
         R: DeserializeOwned + Send + Sync + 'static,
     {
-        self.0.request(method, params).await
+        self.raw.request(method, params).await
     }
     pub fn notification<P>(&self, name: &str, params: Option<&P>) -> Result<()>
     where
         P: Serialize,
     {
-        self.0.notification(name, params)
+        self.raw.notification(name, params)
     }
     pub fn cancel_incoming_request(&self, id: &RequestId, response: Option<Error>) {
-        self.0.cancel_incoming_request(id, response);
+        self.raw.cancel_incoming_request(id, response);
     }
 
     pub fn context(self: Arc<Self>) -> SessionContext {
-        SessionContext::new(&self.0)
+        SessionContext::new(&self.raw)
     }
     pub fn shutdown(&self) {
-        self.0.lock().shutdown();
+        self.raw.lock().shutdown();
     }
     pub async fn wait(&self) -> Result<()> {
-        poll_fn(|cx| self.0.lock().poll_wait_server(cx)).await;
+        poll_fn(|cx| self.raw.lock().poll_wait_server(cx)).await;
 
         loop {
-            let task = self.0.lock().aborts.pop();
+            let task = self.raw.lock().aborts.pop();
             if let Some(task) = task {
                 let _ = task.await;
             } else {
                 break;
             }
         }
-        self.0.lock().server_error()
+        self.raw.lock().server_error()
+    }
+}
+
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session").field("id", &self.id).finish()
     }
 }
 

@@ -7,6 +7,7 @@
   - 他実装との通信
 - SmallString,SmallVec の利用
 - RawBatch,Batch の詳細を隠す
+- 無 ID エラーを記録し、outgoingRequest で ReadEnd エラーを上書きする
 
 ## 通常優先度
 

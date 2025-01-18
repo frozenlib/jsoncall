@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let (server, client) = Session::channel(HelloService, ());
+    println!("server = {server:?}");
+    println!("client = {client:?}");
 
     println!("requste start");
     let response: HelloResponse = client

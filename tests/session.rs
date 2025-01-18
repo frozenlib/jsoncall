@@ -27,6 +27,13 @@ struct HelloResponse {
 }
 
 struct HelloService;
+impl HelloService {
+    fn hello(&self, req: HelloRequest) -> HelloResponse {
+        HelloResponse {
+            message: format!("Hello, {}!", req.name),
+        }
+    }
+}
 impl Handler for HelloService {
     fn request(
         &mut self,
@@ -35,13 +42,7 @@ impl Handler for HelloService {
         cx: RequestContext,
     ) -> jsoncall::Result<jsoncall::Response> {
         match method {
-            "hello" => {
-                let request: HelloRequest = params.to()?;
-                let response = HelloResponse {
-                    message: format!("Hello, {}!", request.name),
-                };
-                Ok(cx.success(&response)?)
-            }
+            "hello" => Ok(cx.success(&self.hello(params.to()?))?),
             _ => Err(jsoncall::Error::MethodNotFound),
         }
     }
@@ -50,7 +51,8 @@ impl Handler for HelloService {
 #[test]
 async fn client_to_server_request() -> Result<()> {
     let (server, client) = Session::channel(HelloService, ());
-    let server = spawn(async move { server.wait().await });
+    println!("server = {server:?}");
+    println!("client = {client:?}");
 
     let response: HelloResponse = client
         .request(
@@ -61,8 +63,26 @@ async fn client_to_server_request() -> Result<()> {
         )
         .await?;
     assert_eq!(response.message, "Hello, Alice!");
+    server.wait().await?;
+    Ok(())
+}
 
-    server.await??;
+#[test]
+async fn client_to_server_request_and_server_wait() -> Result<()> {
+    let (server, client) = Session::channel(HelloService, ());
+    println!("server = {server:?}");
+    println!("client = {client:?}");
 
+    let task = spawn(async move { server.wait().await });
+    let response: HelloResponse = client
+        .request(
+            "hello",
+            Some(&HelloRequest {
+                name: "Alice".to_string(),
+            }),
+        )
+        .await?;
+    assert_eq!(response.message, "Hello, Alice!");
+    task.await??;
     Ok(())
 }
