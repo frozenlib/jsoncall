@@ -129,55 +129,66 @@ impl Iterator for MessageBatchIter {
     }
 }
 
-#[derive(Debug)]
-pub enum CowEx<'a, T> {
-    Borrowed(&'a T),
-    Owned(T),
-}
-impl<T: Serialize> Serialize for CowEx<'_, T> {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self {
-            CowEx::Borrowed(t) => (*t).serialize(serializer),
-            CowEx::Owned(t) => t.serialize(serializer),
-        }
-    }
-}
-impl<'de, T: Deserialize<'de>> Deserialize<'de> for CowEx<'_, T> {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        T::deserialize(deserializer).map(CowEx::Owned)
-    }
-}
+// #[derive(Debug)]
+// pub enum CowEx<'a, T> {
+//     Borrowed(&'a T),
+//     Owned(T),
+// }
+// impl<T: Serialize> Serialize for CowEx<'_, T> {
+//     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+//         match self {
+//             CowEx::Borrowed(t) => (*t).serialize(serializer),
+//             CowEx::Owned(t) => t.serialize(serializer),
+//         }
+//     }
+// }
+// impl<'de, T: Deserialize<'de>> Deserialize<'de> for CowEx<'_, T> {
+//     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+//         T::deserialize(deserializer).map(CowEx::Owned)
+//     }
+// }
 
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub enum RawMessageBatch<'a> {
-    Single(#[serde(borrow)] RawMessage<'a>),
-    Batch(#[serde(borrow)] Vec<RawMessage<'a>>),
-}
-impl<'a> IntoIterator for RawMessageBatch<'a> {
-    type Item = RawMessage<'a>;
-    type IntoIter = RawMessageBatchIter<'a>;
-    fn into_iter(self) -> Self::IntoIter {
-        match self {
-            RawMessageBatch::Single(msg) => RawMessageBatchIter::One(Some(msg)),
-            RawMessageBatch::Batch(vec) => RawMessageBatchIter::Many(vec.into_iter()),
-        }
-    }
-}
+// #[derive(Debug)]
+// pub struct RawMessageBatch<'a>(Vec<RawMessage<'a>>);
 
-pub enum RawMessageBatchIter<'a> {
-    One(Option<RawMessage<'a>>),
-    Many(std::vec::IntoIter<RawMessage<'a>>),
-}
-impl<'a> Iterator for RawMessageBatchIter<'a> {
-    type Item = RawMessage<'a>;
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            RawMessageBatchIter::One(msg) => msg.take(),
-            RawMessageBatchIter::Many(iter) => iter.next(),
-        }
-    }
-}
+// impl<'a> IntoIterator for RawMessageBatch<'a> {
+//     type Item = RawMessage<'a>;
+//     type IntoIter = std::vec::IntoIter<RawMessage<'a>>;
+//     fn into_iter(self) -> Self::IntoIter {
+//         self.0.into_iter()
+//     }
+// }
+
+// #[derive(Debug, Deserialize)]
+// #[serde(untagged)]
+// pub enum RawMessageBatch<'a> {
+//     Single(#[serde(borrow)] RawMessage<'a>),
+//     Batch(#[serde(borrow)] Vec<RawMessage<'a>>),
+// }
+// impl<'a> IntoIterator for RawMessageBatch<'a> {
+//     type Item = RawMessage<'a>;
+//     type IntoIter = RawMessageBatchIter<'a>;
+//     fn into_iter(self) -> Self::IntoIter {
+//         match self {
+//             RawMessageBatch::Single(msg) => RawMessageBatchIter::One(Some(msg)),
+//             RawMessageBatch::Batch(vec) => RawMessageBatchIter::Many(vec.into_iter()),
+//         }
+//     }
+// }
+
+// pub enum RawMessageBatchIter<'a> {
+//     One(Option<RawMessage<'a>>),
+//     Many(std::vec::IntoIter<RawMessage<'a>>),
+// }
+// impl<'a> Iterator for RawMessageBatchIter<'a> {
+//     type Item = RawMessage<'a>;
+//     fn next(&mut self) -> Option<Self::Item> {
+//         match self {
+//             RawMessageBatchIter::One(msg) => msg.take(),
+//             RawMessageBatchIter::Many(iter) => iter.next(),
+//         }
+//     }
+// }
 
 #[derive(Debug, Deserialize)]
 pub struct RawMessage<'a> {
@@ -195,6 +206,20 @@ pub struct RawMessage<'a> {
     pub error: Option<ErrorObject>,
 }
 impl<'a> RawMessage<'a> {
+    pub fn from_line(s: &'a str) -> Result<Vec<Self>, serde_json::Error> {
+        let s = s.trim();
+        if s.starts_with('{') {
+            let m = serde_json::from_str::<Self>(s)?;
+            Ok(vec![m])
+        } else if s.starts_with('[') {
+            serde_json::from_str::<Vec<Self>>(s)
+        } else {
+            Err(<serde_json::Error as serde::de::Error>::custom(
+                "not a json object or array",
+            ))
+        }
+    }
+
     pub(crate) fn verify_version(&self) -> Result<()> {
         if self.jsonrpc == "2.0" {
             Ok(())

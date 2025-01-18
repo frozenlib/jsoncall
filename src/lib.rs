@@ -394,8 +394,7 @@ where
                 break;
             }
             println!("{s}");
-            let b: RawMessageBatch =
-                serde_json::from_str(&s).map_err(|e| Error::DeserializeJson(Arc::new(e)))?;
+            let b = RawMessage::from_line(&s).map_err(|e| Error::DeserializeJson(Arc::new(e)))?;
             println!("success");
             for m in b {
                 self.dispatch_message(m)?;

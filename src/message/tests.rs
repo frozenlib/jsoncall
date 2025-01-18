@@ -1,6 +1,6 @@
 use crate::{
     message::{RawRequestId, RequestId},
-    RawMessage, RawMessageBatch, RawMessageS,
+    RawMessage, RawMessageS,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, value::RawValue, Value};
@@ -58,7 +58,7 @@ fn raw_message_deserialize_error() -> anyhow::Result<()> {
 #[test]
 fn raw_message_deserialize_notification() -> anyhow::Result<()> {
     let input = r#"{"jsonrpc":"2.0","method":"test_method","params":{"param1":"value1"}}"#;
-    let m = serde_json::from_str::<RawMessage>(input).unwrap();
+    let m = serde_json::from_str::<RawMessage>(input)?;
     assert_eq!(m.jsonrpc, "2.0");
     assert_eq!(m.id, None);
     assert_eq!(m.method, Some("test_method".into()));
@@ -69,7 +69,7 @@ fn raw_message_deserialize_notification() -> anyhow::Result<()> {
 #[test]
 fn raw_message_deserialize_escaped() -> anyhow::Result<()> {
     let input = r#"{"jsonrpc":"2.0","id":1,"method":"\u3042","params":{"param1":"value1"}}"#;
-    let m = serde_json::from_str::<RawMessage>(input).unwrap();
+    let m = serde_json::from_str::<RawMessage>(input)?;
     assert_eq!(m.jsonrpc, "2.0");
     assert_eq!(m.id, Some(RequestId(RawRequestId::U128(1))));
     assert_eq!(m.method, Some("あ".into()));
@@ -80,8 +80,7 @@ fn raw_message_deserialize_escaped() -> anyhow::Result<()> {
 #[test]
 fn raw_message_batch_deserialize() -> anyhow::Result<()> {
     let input = r#"{"jsonrpc":"2.0","id":1,"method":"test_method","params":{"param1":"value1"}}"#;
-    let b = serde_json::from_str::<RawMessageBatch>(input).unwrap();
-    let ms: Vec<_> = b.into_iter().collect();
+    let ms = RawMessage::from_line(input)?;
     assert_eq!(ms.len(), 1);
     let m = &ms[0];
     assert_eq!(m.jsonrpc, "2.0");
