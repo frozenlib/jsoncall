@@ -4,7 +4,7 @@
   "version": "2.0.0",
   "options": {
     "env": {
-      "RUST_BACKTRACE": "full",
+      "RUST_BACKTRACE": "1",
     },
   },
   "presentation": {
@@ -242,9 +242,15 @@
     {
       "type": "shell",
       "label": "watch example",
-      "command": "watchexec -c --restart -- cargo run --example example",
+      "command": "watchexec",
       "args": [
-        ""
+        "-c",
+        "--restart",
+        "--",
+        "cargo",
+        "run",
+        "--example",
+        "example"
       ],
       "problemMatcher": [
         "$rustc"

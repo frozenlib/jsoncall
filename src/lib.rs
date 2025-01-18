@@ -293,12 +293,14 @@ where
             Ok(value) => T::deserialize(value).map_err(|e| Error::DeserializeResponse(Arc::new(e))),
             Err(e) => Err(e),
         };
-        let old = mem::replace(self, Self::Ready(result));
-        match old {
-            OutgoingRequestState::None => {}
-            OutgoingRequestState::Waker(waker) => waker.wake(),
-            OutgoingRequestState::Ready(_) => unreachable!(),
-            OutgoingRequestState::End => *self = OutgoingRequestState::End,
+        match self {
+            Self::None | Self::Waker(_) => {
+                if let Self::Waker(waker) = mem::replace(self, Self::Ready(result)) {
+                    waker.wake();
+                }
+            }
+            Self::Ready(_) => {}
+            Self::End => {}
         }
     }
 }
