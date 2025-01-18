@@ -103,7 +103,7 @@ impl<'a> RequestContext<'a> {
         let id = self.id.clone();
         Ok(RawRequestResponse::Spawn(spawn(async move {
             let r = future.await;
-            if let Some(s) = s.0.upgrade() {
+            if let Some(s) = s.raw.upgrade() {
                 let message = MessageData::from_result(id.clone(), r);
                 let s = &mut *s.lock();
                 if let Some(ir) = s.incoming_requests.get_mut(&id) {
@@ -323,11 +323,15 @@ impl OutgoingBuffer {
 }
 
 #[derive(Clone)]
-pub struct SessionContext(Weak<RawSession>);
+pub struct SessionContext {
+    raw: Weak<RawSession>,
+}
 
 impl SessionContext {
     fn new(session: &Arc<RawSession>) -> Self {
-        Self(Arc::downgrade(session))
+        Self {
+            raw: Arc::downgrade(session),
+        }
     }
 }
 
@@ -337,7 +341,7 @@ impl SessionContext {
         P: Serialize,
         R: DeserializeOwned + Send + Sync + 'static,
     {
-        if let Some(s) = self.0.upgrade() {
+        if let Some(s) = self.raw.upgrade() {
             s.request(method, params).await
         } else {
             Err(Error::Shutdown)
@@ -347,14 +351,14 @@ impl SessionContext {
     where
         P: Serialize,
     {
-        if let Some(s) = self.0.upgrade() {
+        if let Some(s) = self.raw.upgrade() {
             s.notification(name, params)
         } else {
             Err(Error::Shutdown)
         }
     }
     pub fn cancel_incoming_request(&self, id: &RequestId, response: Option<Error>) {
-        if let Some(s) = self.0.upgrade() {
+        if let Some(s) = self.raw.upgrade() {
             s.cancel_incoming_request(id, response);
         }
     }
