@@ -3,7 +3,7 @@ use std::{borrow::Cow, sync::Arc};
 use derive_ex::derive_ex;
 use ordered_float::OrderedFloat;
 use parse_display::Display;
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Serialize};
 use serde_json::{json, value::RawValue, Map, Value};
 
 use crate::OutgoingRequestId;
@@ -169,7 +169,6 @@ impl<'a> RawMessage<'a> {
         }
     }
     pub(crate) fn into_varients(self) -> Result<RawMessageVariants<'a>> {
-        self.verify_version()?;
         match self {
             RawMessage {
                 id: Some(id),
@@ -232,6 +231,7 @@ pub(crate) enum RawMessageVariants<'a> {
 #[derive_ex(Default, bound())]
 pub(crate) struct RawMessageS<'a, P, R> {
     #[serde(borrow)]
+    // #[default(Cow::Borrowed("2.0"))]
     pub jsonrpc: Cow<'a, str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<RequestId>,
@@ -245,6 +245,8 @@ pub(crate) struct RawMessageS<'a, P, R> {
     pub error: Option<ErrorObject>,
 }
 
+#[derive(Display)]
+#[display("{0}")]
 pub(crate) struct MessageData(pub String);
 
 impl MessageData {

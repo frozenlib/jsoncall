@@ -317,6 +317,7 @@ impl OutgoingBuffer {
         }
     }
     fn push(&mut self, message: MessageData) {
+        println!("push message : {message}");
         self.messages.push(message);
         self.waker.wake();
     }
@@ -392,28 +393,13 @@ where
                 println!("[{id}]: end_of_file");
                 break;
             }
-            // let b: RawMessageBatch =
-            //     serde_json::from_str(&s).map_err(|e| Error::DeserializeJson(Arc::new(e)))?;
-            // for m in b {
-            //     self.on_message_one(m).await;
-            // }
-            let m: RawMessage =
+            let b: RawMessageBatch =
                 serde_json::from_str(&s).map_err(|e| Error::DeserializeJson(Arc::new(e)))?;
-            self.on_message_one(m).await;
-        }
-        Ok(())
-    }
-    async fn on_message_one(&mut self, m: RawMessage<'_>) {
-        let id = m.id.clone();
-        match self.dispatch_message(m) {
-            Ok(()) => {}
-            Err(e) => {
-                self.session
-                    .lock()
-                    .outgoing_buffer
-                    .push(MessageData::from_error(id, e));
+            for m in b {
+                self.dispatch_message(m)?;
             }
         }
+        Ok(())
     }
     fn dispatch_message(&mut self, m: RawMessage) -> Result<()> {
         match m.into_varients()? {
