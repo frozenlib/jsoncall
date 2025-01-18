@@ -55,7 +55,7 @@ impl Params<'_> {
         if let Some(p) = self.0 {
             match <T as Deserialize>::deserialize(p) {
                 Ok(p) => Ok(Some(p)),
-                Err(e) => Err(Error::ParamsParse(Arc::new(e))),
+                Err(e) => Err(Error::DeserializeParams(Arc::new(e))),
             }
         } else {
             Ok(None)
@@ -274,7 +274,9 @@ where
     }
     fn set_ready(&mut self, result: Result<Value>) {
         let result = match result {
-            Ok(value) => serde_json::from_value(value).map_err(|e| Error::Deserialize(Arc::new(e))),
+            Ok(value) => {
+                serde_json::from_value(value).map_err(|e| Error::DeserializeResponse(Arc::new(e)))
+            }
             Err(e) => Err(e),
         };
         let old = mem::replace(self, Self::Ready(result));

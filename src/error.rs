@@ -6,86 +6,105 @@ use super::{ErrorObject, RequestId};
 pub enum Error {
     ErrorObject(ErrorObject),
     Version(String),
-    MessageStructure,
+    Message,
     RequestIdReused(RequestId),
     RequestIdNotFound(RequestId),
     RequestIdOverflow,
-    ParamsMissing,
-    ParamsParse(Arc<serde_json::Error>),
+    ParamsMissing(Vec<String>),
     Serialize(Arc<serde_json::Error>),
-    Deserialize(Arc<serde_json::Error>),
-    Spawn(Arc<tokio::task::JoinError>),
+    DeserializeParams(Arc<serde_json::Error>),
+    DeserializeResponse(Arc<serde_json::Error>),
     Read(Arc<std::io::Error>),
     ReadEnd,
     Write(Arc<std::io::Error>),
     WriteEnd,
     Shutdown,
 }
+
+pub mod error_codes {
+    pub const PARSE_ERROR: i64 = -32700;
+    pub const INVALID_REQUEST: i64 = -32600;
+    pub const METHOD_NOT_FOUND: i64 = -32601;
+    pub const INVALID_PARAMS: i64 = -32602;
+    pub const INTERNAL_ERROR: i64 = -32603;
+    pub const SERVER_ERROR_START: i64 = -32000;
+    pub const SERVER_ERROR_END: i64 = -32099;
+}
+
 impl Error {
     pub fn into_error_object(self) -> ErrorObject {
         match self {
             Error::ErrorObject(err) => err,
-            Error::Version(version) => ErrorObject {
-                code: -32000,
+            Error::Version(_) => ErrorObject {
+                code: error_codes::INVALID_REQUEST,
                 message: "Unsupported JSON-RPC version".to_string(),
-                data: Some(serde_json::json!(version)),
-            },
-            Error::MessageStructure => ErrorObject {
-                code: -32700,
-                message: "Invalid JSON-RPC message structure".to_string(),
                 data: None,
             },
-            Error::RequestIdReused(id) => ErrorObject {
-                code: -32001,
-                message: "Request ID reused".to_string(),
-                data: Some(serde_json::json!(id)),
+            Error::Message => ErrorObject {
+                code: error_codes::INVALID_REQUEST,
+                message: "Invalid JSON-RPC message".to_string(),
+                data: None,
             },
-            Error::RequestIdNotFound(id) => ErrorObject {
-                code: -32002,
+            Error::RequestIdReused(_) => ErrorObject {
+                code: error_codes::INVALID_REQUEST,
+                message: "Request ID reused".to_string(),
+                data: None,
+            },
+            Error::RequestIdNotFound(_) => ErrorObject {
+                code: error_codes::INVALID_REQUEST,
                 message: "Request ID not found".to_string(),
-                data: Some(serde_json::json!(id)),
+                data: None,
             },
             Error::RequestIdOverflow => ErrorObject {
-                code: -32003,
+                code: error_codes::INVALID_REQUEST,
                 message: "Request ID overflow".to_string(),
                 data: None,
             },
-            Error::ParamsMissing => ErrorObject {
-                code: -32004,
+            Error::ParamsMissing(params) => ErrorObject {
+                code: error_codes::INVALID_PARAMS,
                 message: "Params missing".to_string(),
-                data: None,
-            },
-            Error::ParamsParse(err) => ErrorObject {
-                code: -32005,
-                message: "Params parse error".to_string(),
-                data: Some(serde_json::json!(err.to_string())),
+                data: Some(serde_json::json!({"params":params})),
             },
             Error::Serialize(err) => ErrorObject {
-                code: -32006,
-                message: "Serialize error".to_string(),
+                code: error_codes::INTERNAL_ERROR,
+                message: "Serialize failed".to_string(),
                 data: Some(serde_json::json!(err.to_string())),
             },
-            Error::Deserialize(err) => ErrorObject {
-                code: -32007,
-                message: "Deserialize error".to_string(),
+            Error::DeserializeResponse(err) => ErrorObject {
+                code: error_codes::INTERNAL_ERROR,
+                message: "Deserialize reseponse error".to_string(),
                 data: Some(serde_json::json!(err.to_string())),
             },
-            Error::Spawn(err) => ErrorObject {
-                code: -32008,
-                message: "Spawn error".to_string(),
+            Error::DeserializeParams(err) => ErrorObject {
+                code: error_codes::INVALID_PARAMS,
+                message: "Deserialize params error".to_string(),
                 data: Some(serde_json::json!(err.to_string())),
             },
             Error::Read(err) => ErrorObject {
-                code: -32009,
+                code: error_codes::INTERNAL_ERROR,
                 message: "Read error".to_string(),
                 data: Some(serde_json::json!(err.to_string())),
             },
             Error::ReadEnd => ErrorObject {
-                code: -32010,
+                code: error_codes::INTERNAL_ERROR,
                 message: "Read end".to_string(),
                 data: None,
             },
-            Error::
+            Error::Write(err) => ErrorObject {
+                code: error_codes::INTERNAL_ERROR,
+                message: "Write error".to_string(),
+                data: Some(serde_json::json!(err.to_string())),
+            },
+            Error::WriteEnd => ErrorObject {
+                code: error_codes::INTERNAL_ERROR,
+                message: "Write end".to_string(),
+                data: None,
+            },
+            Error::Shutdown => ErrorObject {
+                code: error_codes::INTERNAL_ERROR,
+                message: "Shutdown".to_string(),
+                data: None,
+            },
         }
     }
 }

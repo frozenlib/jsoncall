@@ -247,7 +247,7 @@ impl Message {
                     params: self.params,
                 }))
             }
-            _ => Err(Error::MessageStructure),
+            _ => Err(Error::Message),
         }
     }
 }
