@@ -64,27 +64,42 @@ impl Params<'_> {
 }
 
 pub struct RequestContext<'a> {
-    m: &'a RequestMessage,
+    id: RequestId,
+    method: String,
+    params: Option<Map<String, Value>>,
     session: &'a Arc<RawSession>,
 }
+
 impl<'a> RequestContext<'a> {
-    fn new(m: &'a RequestMessage, session: &'a Arc<RawSession>) -> Self {
-        Self { m, session }
+    fn new(
+        id: RequestId,
+        method: String,
+        params: Option<Map<String, Value>>,
+        session: &'a Arc<RawSession>,
+    ) -> Self {
+        Self {
+            id,
+            method,
+            params,
+            session,
+        }
     }
 
     pub fn success<T>(self, result: &T) -> Result<Response>
     where
         T: Serialize,
     {
-        let id = self.m.id.clone();
-        Ok(RawRequestResponse::Success(MessageData::from_success(id, result)?).into_response())
+        Ok(
+            RawRequestResponse::Success(MessageData::from_success(self.id, result)?)
+                .into_response(),
+        )
     }
     pub fn spawn(
         self,
         future: impl Future<Output = Result<impl Serialize>> + Send + Sync + 'static,
     ) -> Result<Response> {
-        let id = self.m.id.clone();
         let s = self.session();
+        let id = self.id;
         Ok(RawRequestResponse::Spawn(spawn(async move {
             let r = future.await;
             if let Some(s) = s.0.upgrade() {
@@ -406,21 +421,29 @@ where
         }
         Ok(())
     }
-    // fn on_request(&mut self, m: RequestMessage) {
     fn on_request(&mut self, id: &RequestId, method: &str, params: Option<&RawValue>) {
+        if !self.session.lock().insert_incoming_request(id) {
+            return;
+        }
 
-        // if !self.session.lock().insert_incoming_request(&m.id) {
-        //     return;
-        // }
-        // let cx = RequestContext::new(&m, &self.session);
-        // let params = Params(&m.params);
-        // let r = self.handler.request(&m.method, params, cx);
-        // let s = &mut *self.session.lock();
-        // if let Some(ir) = s.incoming_requests.get_mut(&m.id) {
-        //     if ir.init_finish(&m.id, r, &mut s.aborts, &mut s.outgoing_buffer) {
-        //         s.remove_incoming_request(&m.id);
-        //     }
-        // }
+        let params_map = params.map(|p| serde_json::from_str(p.get()).unwrap_or_default());
+
+        let cx = RequestContext {
+            id: id.clone(),
+            method: method.to_string(),
+            params: params_map.clone(),
+            session: &self.session,
+        };
+
+        let params = Params(&params_map);
+        let r = self.handler.request(method, params, cx);
+
+        let s = &mut *self.session.lock();
+        if let Some(ir) = s.incoming_requests.get_mut(id) {
+            if ir.init_finish(id, r, &mut s.aborts, &mut s.outgoing_buffer) {
+                s.remove_incoming_request(id);
+            }
+        }
     }
     fn on_response(&self, id: RequestId, result: Result<Value>) {
         let Ok(id) = id.try_into() else {
