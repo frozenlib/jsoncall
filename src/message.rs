@@ -87,13 +87,6 @@ impl Iterator for MessageBatchIter {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
-pub enum JsonRpcVersion {
-    #[default]
-    #[serde(rename = "2.0")]
-    V2,
-}
-
 #[derive(Debug)]
 pub enum CowEx<'a, T> {
     Borrowed(&'a T),
