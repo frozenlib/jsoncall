@@ -3,27 +3,52 @@ use std::{borrow::Cow, sync::Arc};
 use derive_ex::derive_ex;
 use ordered_float::OrderedFloat;
 use parse_display::Display;
-use serde::{de, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, value::RawValue, Map, Value};
 
 use crate::OutgoingRequestId;
 
 use super::{Error, Result};
 
-#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq, Hash, Display)]
-#[serde(transparent)]
-pub struct RequestId(RawRequestId);
-
 #[derive(Debug, Serialize, Deserialize, Clone, Display)]
 #[derive_ex(Eq, PartialEq, Hash)]
+#[serde(transparent)]
+pub struct RequestId(#[eq(key = $.key())] RawRequestId);
+
+#[derive(Debug, Serialize, Deserialize, Clone, Display)]
 #[display("{0}")]
 #[serde(untagged)]
 enum RawRequestId {
     U128(u128),
     I128(i128),
-    F64(#[eq(key = OrderedFloat($))] f64),
+    F64(f64),
     #[display("\"{0}\"")]
     String(String),
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+enum RawRequestIdKey<'a> {
+    U128(u128),
+    I128(i128),
+    F64(OrderedFloat<f64>),
+    String(&'a str),
+}
+
+impl RawRequestId {
+    fn key(&self) -> RawRequestIdKey {
+        match self {
+            RawRequestId::U128(n) => RawRequestIdKey::U128(*n),
+            RawRequestId::I128(n) if *n > 0 => RawRequestIdKey::U128(*n as u128),
+            RawRequestId::I128(n) => RawRequestIdKey::I128(*n),
+            RawRequestId::F64(f)
+                if f.fract() == 0.0 && u128::MIN as f64 <= *f && *f <= u128::MAX as f64 =>
+            {
+                RawRequestIdKey::U128(*f as u128)
+            }
+            RawRequestId::F64(f) => RawRequestIdKey::F64(OrderedFloat(*f)),
+            RawRequestId::String(s) => RawRequestIdKey::String(s),
+        }
+    }
 }
 
 const MAX_SAFE_INTEGER: u128 = 9007199254740991;
@@ -148,10 +173,10 @@ impl<'a> Iterator for RawMessageBatchIter<'a> {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 pub struct RawMessage<'a> {
     #[serde(borrow)]
-    pub jsonrpc: Cow<'a, str>,
+    pub jsonrpc: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<RequestId>,
     #[serde(skip_serializing_if = "Option::is_none", borrow)]
@@ -231,7 +256,7 @@ pub(crate) enum RawMessageVariants<'a> {
     },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Eq, PartialEq)]
 #[derive_ex(Default, bound())]
 pub(crate) struct RawMessageS<'a, P, R> {
     #[serde(borrow)]
@@ -354,7 +379,7 @@ impl From<Message> for MessageBatch {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Display)]
+#[derive(Debug, Serialize, Deserialize, Clone, Display, Eq, PartialEq)]
 #[display("[{code}] {message}")]
 pub struct ErrorObject {
     pub code: i64,
