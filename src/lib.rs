@@ -7,11 +7,10 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-use futures::{io::BufReader, AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::value::RawValue;
 use tokio::{
-    io::{duplex, split},
+    io::{duplex, split, AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     spawn,
     task::JoinHandle,
 };
@@ -736,7 +735,6 @@ impl Session {
         let (d0, d1) = duplex(1024);
         let (r0, w0) = split(d0);
         let (r1, w1) = split(d1);
-
         let s0 = Self::new(handler0, BufReader::new(r0), w1);
         let s1 = Self::new(handler1, BufReader::new(r1), w0);
         (s0, s1)
