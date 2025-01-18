@@ -1,9 +1,9 @@
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use derive_ex::derive_ex;
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{json, value::RawValue, Map, Value};
 
 use crate::OutgoingRequestId;
 
@@ -88,7 +88,7 @@ impl Iterator for MessageBatchIter {
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
-pub(crate) enum JsonRpcVersion {
+pub enum JsonRpcVersion {
     #[default]
     #[serde(rename = "2.0")]
     V2,
@@ -116,11 +116,12 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for CowEx<'_, T> {
 #[derive(Debug, Serialize)]
 #[derive_ex(Default, bound())]
 pub(crate) struct RawMessageS<'a, P, R> {
-    pub jsonrpc: JsonRpcVersion,
+    #[serde(borrow)]
+    pub jsonrpc: Cow<'a, str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<RequestId>,
     #[serde(skip_serializing_if = "Option::is_none", borrow)]
-    pub method: Option<&'a str>,
+    pub method: Option<Cow<'a, str>>,
     #[serde(skip_serializing_if = "Option::is_none", borrow)]
     pub params: Option<&'a P>,
     #[serde(skip_serializing_if = "Option::is_none", borrow)]
@@ -147,7 +148,7 @@ impl MessageData {
     {
         Self::from_raw_message_s::<P, ()>(&RawMessageS {
             id: Some(id),
-            method: Some(method),
+            method: Some(Cow::Borrowed(method)),
             params,
             ..Default::default()
         })
@@ -157,7 +158,7 @@ impl MessageData {
         P: Serialize,
     {
         Self::from_raw_message_s::<P, ()>(&RawMessageS {
-            method: Some(method),
+            method: Some(Cow::Borrowed(method)),
             params,
             ..Default::default()
         })
@@ -197,6 +198,22 @@ impl MessageData {
             Err(e) => Self::from_error(Some(id), e),
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RawMessage<'a> {
+    #[serde(borrow)]
+    pub jsonrpc: Cow<'a, str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<RequestId>,
+    #[serde(skip_serializing_if = "Option::is_none", borrow)]
+    pub method: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none", borrow)]
+    pub params: Option<&'a RawValue>,
+    #[serde(skip_serializing_if = "Option::is_none", borrow)]
+    pub result: Option<&'a RawValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<ErrorObject>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
