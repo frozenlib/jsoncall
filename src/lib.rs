@@ -7,10 +7,14 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-use futures::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
+use futures::{io::BufReader, AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::value::RawValue;
-use tokio::{spawn, task::JoinHandle};
+use tokio::{
+    io::{duplex, split},
+    spawn,
+    task::JoinHandle,
+};
 
 mod error;
 mod message;
@@ -725,6 +729,19 @@ impl Session {
         }
         Self(session)
     }
+    pub fn channel(
+        handler0: impl Handler + Send + Sync + 'static,
+        handler1: impl Handler + Send + Sync + 'static,
+    ) -> (Self, Self) {
+        let (d0, d1) = duplex(1024);
+        let (r0, w0) = split(d0);
+        let (r1, w1) = split(d1);
+
+        let s0 = Self::new(handler0, BufReader::new(r0), w1);
+        let s1 = Self::new(handler1, BufReader::new(r1), w0);
+        (s0, s1)
+    }
+
     pub async fn request<P, R>(&self, method: &str, params: Option<&P>) -> Result<R>
     where
         P: Serialize,

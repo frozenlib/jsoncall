@@ -10,7 +10,7 @@ serde_json = { version = "1.0.135", features = ["raw_value"] }
 futures = "0.3.31"
 # url = "2.5.4"
 derive-ex = "0.1.8"
-tokio = { version = "1.43.0", "features" = ["sync", "rt"] }
+tokio = { version = "1.43.0", "features" = ["sync", "rt", "io-util"] }
 ordered-float = "4.6.0"
 # slabmap = "0.2.1"
 thiserror = "2.0.11"
