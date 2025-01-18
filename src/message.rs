@@ -15,6 +15,12 @@ use super::{Error, Result};
 #[serde(transparent)]
 pub struct RequestId(#[eq(key = $.key())] RawRequestId);
 
+impl From<i128> for RequestId {
+    fn from(id: i128) -> Self {
+        RequestId(RawRequestId::I128(id))
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Display)]
 #[display("{0}")]
 #[serde(untagged)]
@@ -176,11 +182,11 @@ impl<'a> Iterator for RawMessageBatchIter<'a> {
 #[derive(Debug, Deserialize)]
 pub struct RawMessage<'a> {
     #[serde(borrow)]
-    pub jsonrpc: &'a str,
+    pub jsonrpc: Cow<'a, str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<RequestId>,
     #[serde(skip_serializing_if = "Option::is_none", borrow)]
-    pub method: Option<&'a str>,
+    pub method: Option<Cow<'a, str>>,
     #[serde(skip_serializing_if = "Option::is_none", borrow)]
     pub params: Option<&'a RawValue>,
     #[serde(skip_serializing_if = "Option::is_none", borrow)]
@@ -239,7 +245,7 @@ impl<'a> RawMessage<'a> {
 pub(crate) enum RawMessageVariants<'a> {
     Request {
         id: RequestId,
-        method: &'a str,
+        method: Cow<'a, str>,
         params: Option<&'a RawValue>,
     },
     Success {
@@ -251,7 +257,7 @@ pub(crate) enum RawMessageVariants<'a> {
         error: ErrorObject,
     },
     Notification {
-        method: &'a str,
+        method: Cow<'a, str>,
         params: Option<&'a RawValue>,
     },
 }

@@ -406,7 +406,7 @@ where
     fn dispatch_message(&mut self, m: RawMessage) -> Result<()> {
         match m.into_varients()? {
             RawMessageVariants::Request { id, method, params } => {
-                self.on_request(id, method, params)
+                self.on_request(id, &method, params)
             }
             RawMessageVariants::Success { id, result } => {
                 self.on_response(id, Ok(result));
@@ -417,7 +417,7 @@ where
                 }
             }
             RawMessageVariants::Notification { method, params } => {
-                self.on_notification(method, params);
+                self.on_notification(&method, params);
             }
         }
         Ok(())
