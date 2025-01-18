@@ -156,7 +156,7 @@ impl RawRequestResponse {
 
 enum RawNotificationResponse {
     Success,
-    Spawn(JoinHandle<()>),
+    Spawn(#[allow(dead_code)] JoinHandle<()>), // todo
 }
 impl RawNotificationResponse {
     fn into_response(self) -> Response {
@@ -166,7 +166,7 @@ impl RawNotificationResponse {
 
 enum RawResponse {
     Request(RawRequestResponse),
-    Notification(RawNotificationResponse),
+    Notification(#[allow(dead_code)] RawNotificationResponse), // todo
 }
 
 pub struct Response(RawResponse);

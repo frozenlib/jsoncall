@@ -49,7 +49,7 @@ impl Handler for HelloService {
 
 #[test]
 async fn client_to_server_request() -> Result<()> {
-    let (server, client) = Session::channel((), ());
+    let (server, client) = Session::channel(HelloService, ());
     let server = spawn(async move { server.wait().await });
 
     let response: HelloResponse = client
