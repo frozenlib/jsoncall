@@ -32,76 +32,58 @@ impl Error {
                 message: e.message,
                 data: e.data,
             },
-            Error::Version(_) => ErrorObject {
-                code: error_codes::INVALID_REQUEST,
-                message: "Unsupported JSON-RPC version".to_string(),
-                data: None,
-            },
-            Error::Message => ErrorObject {
-                code: error_codes::INVALID_REQUEST,
-                message: "Invalid JSON-RPC message".to_string(),
-                data: None,
-            },
-            Error::RequestIdReused(_) => ErrorObject {
-                code: error_codes::INVALID_REQUEST,
-                message: "Request ID reused".to_string(),
-                data: None,
-            },
-            Error::RequestIdNotFound(_) => ErrorObject {
-                code: error_codes::INVALID_REQUEST,
-                message: "Request ID not found".to_string(),
-                data: None,
-            },
-            Error::RequestIdOverflow => ErrorObject {
-                code: error_codes::INVALID_REQUEST,
-                message: "Request ID overflow".to_string(),
-                data: None,
-            },
-            Error::ParamsMissing => ErrorObject {
-                code: error_codes::INVALID_PARAMS,
-                message: "`params` is required but missing".to_string(),
-                data: None,
-            },
-            Error::Serialize(e) => ErrorObject {
-                code: error_codes::INTERNAL_ERROR,
-                message: "Serialize failed".to_string(),
-                data: Some(serde_json::json!(e.to_string())),
-            },
-            Error::DeserializeResponse(e) => ErrorObject {
-                code: error_codes::INTERNAL_ERROR,
-                message: "Deserialize reseponse failed".to_string(),
-                data: Some(serde_json::json!(e.to_string())),
-            },
-            Error::DeserializeParams(e) => ErrorObject {
-                code: error_codes::INVALID_PARAMS,
-                message: "Deserialize params failed".to_string(),
-                data: Some(serde_json::json!(e.to_string())),
-            },
-            Error::Read(e) => ErrorObject {
-                code: error_codes::INTERNAL_ERROR,
-                message: "Read error".to_string(),
-                data: Some(serde_json::json!(e.to_string())),
-            },
-            Error::ReadEnd => ErrorObject {
-                code: error_codes::INTERNAL_ERROR,
-                message: "Read end".to_string(),
-                data: None,
-            },
-            Error::Write(e) => ErrorObject {
-                code: error_codes::INTERNAL_ERROR,
-                message: "Write error".to_string(),
-                data: Some(serde_json::json!(e.to_string())),
-            },
-            Error::WriteEnd => ErrorObject {
-                code: error_codes::INTERNAL_ERROR,
-                message: "Write end".to_string(),
-                data: None,
-            },
-            Error::Shutdown => ErrorObject {
-                code: error_codes::INTERNAL_ERROR,
-                message: "Shutdown".to_string(),
-                data: None,
-            },
+            Error::Version(_) => ErrorObject::new(
+                error_codes::INVALID_REQUEST,
+                "Unsupported JSON-RPC version",
+                None,
+            ),
+            Error::Message => ErrorObject::new(
+                error_codes::INVALID_REQUEST,
+                "Invalid JSON-RPC message",
+                None,
+            ),
+            Error::RequestIdReused(_) => {
+                ErrorObject::new(error_codes::INVALID_REQUEST, "Request ID reused", None)
+            }
+            Error::RequestIdNotFound(_) => {
+                ErrorObject::new(error_codes::INVALID_REQUEST, "Request ID not found", None)
+            }
+            Error::RequestIdOverflow => {
+                ErrorObject::new(error_codes::INVALID_REQUEST, "Request ID overflow", None)
+            }
+            Error::ParamsMissing => ErrorObject::new(
+                error_codes::INVALID_PARAMS,
+                "`params` is required but missing",
+                None,
+            ),
+            Error::Serialize(e) => ErrorObject::new(
+                error_codes::INTERNAL_ERROR,
+                "Serialize failed",
+                Some(serde_json::json!(e.to_string())),
+            ),
+            Error::DeserializeResponse(e) => ErrorObject::new(
+                error_codes::INTERNAL_ERROR,
+                "Deserialize reseponse failed",
+                Some(serde_json::json!(e.to_string())),
+            ),
+            Error::DeserializeParams(e) => ErrorObject::new(
+                error_codes::INVALID_PARAMS,
+                "Deserialize params failed",
+                Some(serde_json::json!(e.to_string())),
+            ),
+            Error::Read(e) => ErrorObject::new(
+                error_codes::INTERNAL_ERROR,
+                "Read error",
+                Some(serde_json::json!(e.to_string())),
+            ),
+            Error::ReadEnd => ErrorObject::new(error_codes::INTERNAL_ERROR, "Read end", None),
+            Error::Write(e) => ErrorObject::new(
+                error_codes::INTERNAL_ERROR,
+                "Write error",
+                Some(serde_json::json!(e.to_string())),
+            ),
+            Error::WriteEnd => ErrorObject::new(error_codes::INTERNAL_ERROR, "Write end", None),
+            Error::Shutdown => ErrorObject::new(error_codes::INTERNAL_ERROR, "Shutdown", None),
         }
     }
 }
