@@ -11,11 +11,13 @@ use crate::OutgoingRequestId;
 use super::{Error, Result};
 
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq, Hash, Display)]
+#[serde(transparent)]
 pub struct RequestId(RawRequestId);
 
 #[derive(Debug, Serialize, Deserialize, Clone, Display)]
 #[derive_ex(Eq, PartialEq, Hash)]
 #[display("{0}")]
+#[serde(untagged)]
 enum RawRequestId {
     U128(u128),
     I128(i128),
@@ -116,9 +118,9 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for CowEx<'_, T> {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(untagged)]
+#[serde(untagged, bound = "'de:'a")]
 pub enum RawMessageBatch<'a> {
-    Single(#[serde(borrow)] RawMessage<'a>),
+    Single(RawMessage<'a>),
     Batch(Vec<RawMessage<'a>>),
 }
 impl<'a> IntoIterator for RawMessageBatch<'a> {
@@ -148,14 +150,15 @@ impl<'a> Iterator for RawMessageBatchIter<'a> {
 
 #[derive(Debug, Deserialize)]
 pub struct RawMessage<'a> {
+    #[serde(borrow)]
     pub jsonrpc: Cow<'a, str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<RequestId>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", borrow)]
     pub method: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", borrow)]
     pub params: Option<&'a RawValue>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", borrow)]
     pub result: Option<&'a RawValue>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ErrorObject>,

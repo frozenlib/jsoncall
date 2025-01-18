@@ -393,8 +393,10 @@ where
                 println!("[{id}]: end_of_file");
                 break;
             }
+            println!("{s}");
             let b: RawMessageBatch =
                 serde_json::from_str(&s).map_err(|e| Error::DeserializeJson(Arc::new(e)))?;
+            println!("success");
             for m in b {
                 self.dispatch_message(m)?;
             }
