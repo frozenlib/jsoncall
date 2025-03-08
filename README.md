@@ -20,7 +20,7 @@ It is specifically designed to facilitate the creation of applications where the
 - Built-in support for cancellation handling
   - Enables implementation of cancellation for [Language Server Protocol] and [Model Context Protocol]
 - Comprehensive error handling
-  - Provides error types that are as easy to handle as [`anyhow`] while distinguishing between information that should be sent externally and information that should not
+  - Provides error types that can store any error like [`anyhow`] or `Box<dyn Error>`, with additional functionality to distinguish between information that should be sent externally and information that should not
 - Bidirectional communication support
 - Notification support
 - Transport layer supports any type implementing `tokio`'s `AsyncBufRead` and `AsyncWrite` traits
