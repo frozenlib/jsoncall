@@ -1,10 +1,14 @@
 use serde::{Deserialize, Serialize};
 
-use jsoncall::{Handler, Params, RequestContext, Response, Result, Session};
+use jsoncall::{Handler, Params, RequestContext, Response, Result, Session, SessionOptions};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    Ok(Session::from_stdio(HelloHandler).wait().await?)
+    Ok(
+        Session::from_stdio(HelloHandler, &SessionOptions::default())
+            .wait()
+            .await?,
+    )
 }
 struct HelloHandler;
 

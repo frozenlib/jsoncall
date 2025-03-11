@@ -1,13 +1,14 @@
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
-use jsoncall::{Result, Session};
+use jsoncall::{Result, Session, SessionOptions};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let client = Session::from_command(
         (),
         Command::new("cargo").args(["run", "--example", "stdio_server"]),
+        &SessionOptions::default(),
     )?;
     let response: HelloResponse = client
         .request(

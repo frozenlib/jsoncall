@@ -1,19 +1,24 @@
 use std::{sync::Arc, time::Duration};
 
-use assert_call::{call, Call, CallRecorder};
+use assert_call::{Call, CallRecorder, call};
 use jsoncall::{
-    ErrorCode, ErrorObject, Handler, Hook, NotificationContext, Params, RequestContext, RequestId,
-    Response, Result, Session, SessionContext, SessionError, SessionErrorKind, NO_PARAMS,
+    ErrorCode, ErrorObject, Handler, Hook, NO_PARAMS, NotificationContext, Params, RequestContext,
+    RequestId, Response, Result, Session, SessionContext, SessionError, SessionErrorKind,
+    SessionOptions,
 };
 use serde::{Deserialize, Serialize};
 use tokio::{
-    io::{duplex, split, AsyncBufRead, AsyncWrite, AsyncWriteExt, BufReader},
+    io::{AsyncBufRead, AsyncWrite, AsyncWriteExt, BufReader, duplex, split},
     spawn, test,
     time::sleep,
 };
 
 fn make_channel() -> (Session, Session) {
-    Session::new_channel(HelloService { id: "server" }, HelloService { id: "client" })
+    Session::new_channel(
+        HelloService { id: "server" },
+        HelloService { id: "client" },
+        &SessionOptions::default(),
+    )
 }
 
 fn make_channel_and_stream() -> (Session, impl AsyncBufRead, impl AsyncWrite) {
@@ -21,7 +26,12 @@ fn make_channel_and_stream() -> (Session, impl AsyncBufRead, impl AsyncWrite) {
     let (r0, w0) = split(d0);
     let (r1, w1) = split(d1);
     (
-        Session::new(HelloService { id: "server" }, BufReader::new(r0), w0),
+        Session::new(
+            HelloService { id: "server" },
+            BufReader::new(r0),
+            w0,
+            &SessionOptions::default(),
+        ),
         BufReader::new(r1),
         w1,
     )
@@ -472,7 +482,12 @@ async fn invalid_json() -> Result<()> {
     let (server, r, mut w) = make_channel_and_stream();
     w.write_all(b"aaa\n").await?;
     w.flush().await?;
-    let client = Session::new(HelloService { id: "client" }, r, w);
+    let client = Session::new(
+        HelloService { id: "client" },
+        r,
+        w,
+        &SessionOptions::default(),
+    );
     let rs = server.wait().await;
     assert!(rs.is_err());
     let rc = client.wait().await;
@@ -484,7 +499,12 @@ async fn invalid_message() -> Result<()> {
     let (server, r, mut w) = make_channel_and_stream();
     w.write_all(b"{}\n").await?;
     w.flush().await?;
-    let client = Session::new(HelloService { id: "client" }, r, w);
+    let client = Session::new(
+        HelloService { id: "client" },
+        r,
+        w,
+        &SessionOptions::default(),
+    );
     let rs = server.wait().await;
     assert!(rs.is_err());
     let rc = client.wait().await;

@@ -6,14 +6,21 @@ use tokio::{
     time::sleep,
 };
 
-use jsoncall::{ErrorCode, Handler, Params, RequestContext, Response, Result, Session};
+use jsoncall::{
+    ErrorCode, Handler, Params, RequestContext, Response, Result, Session, SessionOptions,
+};
 
 fn make_channel_and_stream() -> (Session, impl AsyncBufRead, impl AsyncWrite) {
     let (d0, d1) = duplex(1024);
     let (r0, w0) = split(d0);
     let (r1, w1) = split(d1);
     (
-        Session::new(HelloService, BufReader::new(r0), w0),
+        Session::new(
+            HelloService,
+            BufReader::new(r0),
+            w0,
+            &SessionOptions::default(),
+        ),
         BufReader::new(r1),
         w1,
     )
@@ -24,7 +31,7 @@ async fn main() -> Result<()> {
     let (server, r, mut w) = make_channel_and_stream();
     w.write_all(b"aaa\n").await?;
     w.flush().await?;
-    let client = Session::new(HelloService, r, w);
+    let client = Session::new(HelloService, r, w, &SessionOptions::default());
     let rs = server.wait().await;
     assert!(rs.is_err());
     let rc = client.wait().await;

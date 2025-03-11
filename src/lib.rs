@@ -886,6 +886,11 @@ impl RawSession {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct SessionOptions {
+    pub expose_internals: Option<bool>,
+}
+
 pub struct Session {
     raw: Arc<RawSession>,
     id: usize,
@@ -896,8 +901,9 @@ impl Session {
         handler: impl Handler + Send + Sync + 'static,
         reader: impl AsyncBufRead + Send + Sync + 'static,
         writer: impl AsyncWrite + Send + Sync + 'static,
+        options: &SessionOptions,
     ) -> Self {
-        let expose_internals = cfg!(debug_assertions);
+        let expose_internals = options.expose_internals.unwrap_or(cfg!(debug_assertions));
         let hook = handler.hook();
         let session = RawSession::new(expose_internals, hook);
         let id = session.s.update(|st, _cx| {
