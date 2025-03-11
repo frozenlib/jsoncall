@@ -11,18 +11,18 @@
 //!
 //! `jsoncall`は Rust の型を最大限に活用したシンプルな非同期 [JSON-RPC 2.0] ライブラリです。
 //!
-//! 特に [Language Server Protocol] や [Model Context Protocol] のような、
+//! 特に [Language Server Protocol] や [Model Context Protocol] のような
 //! クライアントがサーバーを起動するタイプのアプリケーションを容易に作成できるようにすることを目的としています。
 //!
 //! ## 特徴
 //!
 //! - [`tokio`] と `async/await` による非同期のサポート
 //! - [`serde`] を利用し、強く型付けされたリクエストとレスポンスを利用可能
-//!   - [`typify`] によって JSON Schema から Rust の型を生成すれば、JSON Schema で定義された RPC も容易に実装可能
+//!   - [`typify`] によって JSON Schema から Rust の型を生成すれば JSON Schema で定義された RPC も容易に実装可能
 //! - キャンセル処理のサポート基盤あり
 //!   - [Language Server Protocol] や [Model Context Protocol] のキャンセル処理を実装可能
 //! - エラーハンドリングの充実
-//!   - [`anyhow`] のように扱いやすく、さらに外部に送信すべき情報とそうでない情報を区別するエラー型を用意
+//!   - [`anyhow`] や `Box<dyn Error>` のように任意のエラーを格納でき、それに加えて外部に送信すべき情報とそうでない情報を区別する機能を持つエラー型を用意
 //! - 双方向通信のサポート
 //! - 通知（Notification）のサポート
 //! - トランスポートは `tokio` の `AsyncBufRead` と `AsyncWrite` を実装した型であれば何でも可
@@ -184,7 +184,7 @@
 //! - Built-in support for cancellation handling
 //!   - Enables implementation of cancellation for [Language Server Protocol] and [Model Context Protocol]
 //! - Comprehensive error handling
-//!   - Provides error types that are as easy to handle as [`anyhow`] while distinguishing between information that should be sent externally and information that should not
+//!   - Provides error types that can store any error like [`anyhow`] or `Box<dyn Error>`, with additional functionality to distinguish between information that should be sent externally and information that should not
 //! - Bidirectional communication support
 //! - Notification support
 //! - Transport layer supports any type implementing `tokio`'s `AsyncBufRead` and `AsyncWrite` traits

@@ -271,6 +271,11 @@ impl RawSessionError {
         }
     }
 }
+impl From<std::io::Error> for SessionError {
+    fn from(e: std::io::Error) -> Self {
+        Self::from_error(e)
+    }
+}
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub type SessionResult<T> = Result<T, SessionError>;

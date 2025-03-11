@@ -1,11 +1,11 @@
 use std::process::Stdio;
 
 use tokio::{
-    io::{duplex, split, BufReader},
+    io::{BufReader, duplex, split},
     process::Command,
 };
 
-use crate::{Handler, Session};
+use crate::{Handler, Session, SessionError};
 
 impl Session {
     pub fn new_channel(
@@ -31,7 +31,7 @@ impl Session {
     pub fn from_command(
         handler: impl Handler + Send + Sync + 'static,
         command: &mut Command,
-    ) -> Result<Session, std::io::Error> {
+    ) -> Result<Session, SessionError> {
         let child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
