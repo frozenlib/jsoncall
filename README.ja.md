@@ -43,7 +43,7 @@ jsoncall = "0.0.1"
 
 ```rust
 use serde::{Deserialize, Serialize};
-use jsoncall::{Handler, Params, RequestContext, Response, Result, Session};
+use jsoncall::{Handler, Params, RequestContext, Response, Result, Session, SessionOptions};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct HelloRequest {
@@ -77,7 +77,7 @@ impl HelloHandler {
 #[tokio::main]
 async fn main() -> Result<()> {
     // 標準入出力を使用してサーバーを起動
-    Ok(Session::from_stdio(HelloHandler).wait().await?)
+    Ok(Session::from_stdio(HelloHandler, &SessionOptions::default()).wait().await?)
 }
 ```
 
@@ -86,7 +86,7 @@ async fn main() -> Result<()> {
 ```rust
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
-use jsoncall::{Result, Session};
+use jsoncall::{Result, Session, SessionOptions};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct HelloRequest {
@@ -104,6 +104,7 @@ async fn main() -> Result<()> {
     let client = Session::from_command(
         (),
         Command::new("cargo").args(["run", "--example", "stdio_server"]),
+        &SessionOptions::default(),
     )?;
 
     // リクエストの送信
