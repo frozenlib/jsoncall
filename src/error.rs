@@ -125,7 +125,7 @@ impl Error {
     }
     fn message(&self, expose_internals: bool) -> String {
         let mut message = None;
-        if self.message_is_public {
+        if expose_internals || self.message_is_public {
             message = self.message.clone();
         }
         if expose_internals {
