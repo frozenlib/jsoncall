@@ -33,7 +33,7 @@ Add the following to your Cargo.toml:
 
 ```toml
 [dependencies]
-jsoncall = "0.0.1"
+jsoncall = "0.0.2"
 ```
 
 ## Usage

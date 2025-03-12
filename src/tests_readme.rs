@@ -35,7 +35,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! jsoncall = "0.0.1"
+//! jsoncall = "0.0.2"
 //! ```
 //!
 //! ## 使用方法
@@ -198,7 +198,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! jsoncall = "0.0.1"
+//! jsoncall = "0.0.2"
 //! ```
 //!
 //! ## Usage
