@@ -1,9 +1,9 @@
 use crate::{
-    message::{RawRequestId, RequestId},
     ErrorCode, RawMessage, Result,
+    message::{RawRequestId, RequestId},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, value::RawValue, Map, Value};
+use serde_json::{Map, Value, json, value::RawValue};
 
 use super::MessageData;
 
@@ -73,7 +73,7 @@ fn raw_message_deserialize_escaped() -> Result<()> {
     let input = r#"{"jsonrpc":"2.0","id":1,"method":"\u3042","params":{"param1":"value1"}}"#;
     let m = serde_json::from_str::<RawMessage>(input)?;
     assert_eq!(m.jsonrpc, "2.0");
-    assert_eq!(m.id, Some(RequestId(RawRequestId::U128(1))));
+    assert_eq!(m.id, Some(RequestId(RawRequestId::U64(1))));
     assert_eq!(m.method, Some("あ".into()));
     assert_eq!(to_value(m.params)?, json!({"param1": "value1"}));
     Ok(())
@@ -227,4 +227,16 @@ fn to_value(x: Option<&RawValue>) -> Result<Value, serde_json::Error> {
         Some(v) => Value::deserialize(v),
         None => Ok(Value::Null),
     }
+}
+
+#[test]
+fn request_id_serialize() {
+    fn check(input: &str) {
+        let value: RequestId = serde_json::from_str(input).unwrap();
+        let a = serde_json::to_string(&value).unwrap();
+        assert_eq!(a, input);
+    }
+    check("1");
+    check("-1");
+    check("1.0");
 }

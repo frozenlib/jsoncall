@@ -4,9 +4,9 @@ use derive_ex::derive_ex;
 use ordered_float::OrderedFloat;
 use parse_display::Display;
 use serde::{Deserialize, Deserializer, Serialize};
-use serde_json::{value::RawValue, Value};
+use serde_json::{Value, value::RawValue};
 
-use crate::{utils::write_string_no_escape, Error, OutgoingRequestId, SessionError, SessionResult};
+use crate::{Error, OutgoingRequestId, SessionError, SessionResult, utils::write_string_no_escape};
 
 use super::Result;
 
@@ -15,9 +15,9 @@ use super::Result;
 #[serde(transparent)]
 pub struct RequestId(#[eq(key = $.key())] RawRequestId);
 
-impl From<i128> for RequestId {
-    fn from(id: i128) -> Self {
-        RequestId(RawRequestId::I128(id))
+impl From<u64> for RequestId {
+    fn from(id: u64) -> Self {
+        RequestId(RawRequestId::U64(id))
     }
 }
 
@@ -25,8 +25,8 @@ impl From<i128> for RequestId {
 #[display("{0}")]
 #[serde(untagged)]
 enum RawRequestId {
-    U128(u128),
-    I128(i128),
+    U64(u64),
+    I64(i64),
     F64(f64),
     #[display("\"{0}\"")]
     String(String),
@@ -34,8 +34,8 @@ enum RawRequestId {
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 enum RawRequestIdKey<'a> {
-    U128(u128),
-    I128(i128),
+    U64(u64),
+    I64(i64),
     F64(OrderedFloat<f64>),
     String(&'a str),
 }
@@ -43,13 +43,13 @@ enum RawRequestIdKey<'a> {
 impl RawRequestId {
     fn key(&self) -> RawRequestIdKey {
         match self {
-            RawRequestId::U128(n) => RawRequestIdKey::U128(*n),
-            RawRequestId::I128(n) if *n > 0 => RawRequestIdKey::U128(*n as u128),
-            RawRequestId::I128(n) => RawRequestIdKey::I128(*n),
+            RawRequestId::U64(n) => RawRequestIdKey::U64(*n),
+            RawRequestId::I64(n) if *n > 0 => RawRequestIdKey::U64(*n as u64),
+            RawRequestId::I64(n) => RawRequestIdKey::I64(*n),
             RawRequestId::F64(f)
-                if f.fract() == 0.0 && u128::MIN as f64 <= *f && *f <= u128::MAX as f64 =>
+                if f.fract() == 0.0 && u64::MIN as f64 <= *f && *f <= u64::MAX as f64 =>
             {
-                RawRequestIdKey::U128(*f as u128)
+                RawRequestIdKey::U64(*f as u64)
             }
             RawRequestId::F64(f) => RawRequestIdKey::F64(OrderedFloat(*f)),
             RawRequestId::String(s) => RawRequestIdKey::String(s),
@@ -57,11 +57,11 @@ impl RawRequestId {
     }
 }
 
-const MAX_SAFE_INTEGER: u128 = 9007199254740991;
+const MAX_SAFE_INTEGER: u64 = 9007199254740991;
 impl From<OutgoingRequestId> for RequestId {
     fn from(id: OutgoingRequestId) -> Self {
-        if id.0 < MAX_SAFE_INTEGER {
-            RequestId(RawRequestId::U128(id.0))
+        if id.0 < MAX_SAFE_INTEGER as u128 {
+            RequestId(RawRequestId::U64(id.0 as u64))
         } else {
             RequestId(RawRequestId::String(id.0.to_string()))
         }
@@ -77,8 +77,8 @@ impl TryFrom<&RequestId> for OutgoingRequestId {
     type Error = SessionError;
     fn try_from(id: &RequestId) -> SessionResult<OutgoingRequestId> {
         match id.0 {
-            RawRequestId::U128(n) => return Ok(OutgoingRequestId(n)),
-            RawRequestId::I128(n) => {
+            RawRequestId::U64(n) => return Ok(OutgoingRequestId(n as u128)),
+            RawRequestId::I64(n) => {
                 if let Ok(value) = n.try_into() {
                     return Ok(OutgoingRequestId(value));
                 }
